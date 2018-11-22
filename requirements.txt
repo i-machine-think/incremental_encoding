@@ -1,0 +1,9 @@
+torch
+numpy
+dill
+tqdm
+torchtext
+six
+mock
+matplotlib
+https://github.com/i-machine-think/machine.git
