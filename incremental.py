@@ -23,12 +23,11 @@ class IncrementalSeq2Seq(Seq2seq):
         super().__init__(*args, **kwargs)
         self.use_embeddings = use_embeddings
 
-    def forward(self, input_variable, input_lengths=None, target_variable=None,
-                teacher_forcing_ratio=0):
+    def forward(self, input_variable, input_lengths=None, target_variable=None, teacher_forcing_ratio=0):
         encoder_outputs, encoder_hidden, encoder_predictions = self.encoder(input_variable, input_lengths)
 
         decoder_outputs, decoder_hidden, other = self.decoder(
-            inputs=target_variable,
+            inputs=target_variable["decoder_output"],
             encoder_hidden=encoder_hidden,
             encoder_outputs=encoder_outputs,
             function=self.decode_function,

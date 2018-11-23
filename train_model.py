@@ -203,8 +203,8 @@ else:
     # The only difference here is in the input validation
     decoder_classes = {
         None: DecoderRNN,
-        "normal": AnticipatingDecoderRNN,
-        "embeddings": AnticipatingDecoderRNN
+        "normal": DecoderRNN,
+        "embeddings": DecoderRNN
     }
 
     encoder_cls = encoder_classes[opt.anticipation_loss]
