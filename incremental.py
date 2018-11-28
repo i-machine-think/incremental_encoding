@@ -24,9 +24,9 @@ class IncrementalSeq2Seq(Seq2seq):
         self.use_embeddings = use_embeddings
 
     def forward(self, input_variable, input_lengths=None, target_variable=None, teacher_forcing_ratio=0):
-        encoder_outputs, encoder_hidden, encoder_predictions = self.encoder(input_variable, input_lengths)
+        encoder_outputs, encoder_hidden, encoder_predictions = self.encoder_module(input_variable, input_lengths)
 
-        decoder_outputs, decoder_hidden, other = self.decoder(
+        decoder_outputs, decoder_hidden, other = self.decoder_module(
             inputs=target_variable["decoder_output"],
             encoder_hidden=encoder_hidden,
             encoder_outputs=encoder_outputs,
@@ -77,46 +77,6 @@ class AnticipatingEncoderRNN(EncoderRNN):
             encoder_predictions.append(predictive_dist)
 
         return output, hidden, encoder_predictions
-
-
-class AnticipatingDecoderRNN(DecoderRNN):
-    def _validate_args(self, inputs, encoder_hidden, encoder_outputs, function, teacher_forcing_ratio):
-        if self.use_attention:
-            if encoder_outputs is None:
-                raise ValueError("Argument encoder_outputs cannot be None when attention is used.")
-
-        # inference batch size
-        if inputs is None and encoder_hidden is None:
-            batch_size = 1
-        else:
-            if inputs is not None:
-                # Using anticipation loss, input is a dictionary of the decoder output and the encoder input, both of
-                # which is necessary to calculate the losses
-                if type(inputs) == dict:
-                    batch_size = inputs[list(inputs.keys())[0]].size(0)
-                else:
-                    batch_size = inputs.size(0)
-            else:
-                if self.rnn_cell is nn.LSTM:
-                    batch_size = encoder_hidden[0].size(1)
-                elif self.rnn_cell is nn.GRU:
-                    batch_size = encoder_hidden.size(1)
-
-        # set default input and max decoding length
-        if inputs is None:
-            if teacher_forcing_ratio > 0:
-                raise ValueError("Teacher forcing has to be disabled (set 0) when no inputs is provided.")
-            inputs = torch.tensor([self.sos_id] * batch_size, dtype=torch.long, device=device).view(batch_size, 1)
-
-            max_length = self.max_length
-        else:
-            # Same as above
-            if type(inputs) == dict:
-                max_length = inputs[list(inputs.keys())[0]].size(0) - 1
-            else:
-                max_length = inputs.size(1) - 1  # minus the start of sequence symbol
-
-        return inputs, batch_size, max_length
 
 
 class AnticipatingEmbeddingEncoderRNN(AnticipatingEncoderRNN):

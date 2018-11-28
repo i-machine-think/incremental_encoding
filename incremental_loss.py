@@ -65,7 +65,7 @@ class AnticipationEmbeddingLoss(Loss):
 
         super().__init__(
             self._NAME, self._SHORTNAME, self._INPUTS, self._TARGETS,
-            nn.MSELoss( size_average=size_average))
+            nn.MSELoss(size_average=size_average))
 
     def get_loss(self):
         if isinstance(self.acc_loss, int):
