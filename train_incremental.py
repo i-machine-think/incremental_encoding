@@ -7,11 +7,12 @@ import os
 
 import torch
 from machine.models import EncoderRNN, DecoderRNN, Seq2seq
-from train_model import init_argparser, validate_options, init_logging, prepare_dataset, initialize_model, \
-    prepare_losses_and_metrics, create_trainer, load_model_from_checkpoint
+from train_model import init_argparser, validate_options, init_logging, prepare_dataset, prepare_losses_and_metrics, \
+    load_model_from_checkpoint
 
 from incremental import AnticipatingEncoderRNN, IncrementalSeq2Seq, AnticipatingEmbeddingEncoderRNN
 from incremental_loss import AnticipationLoss, AnticipationEmbeddingLoss
+from custom_trainer import SupervisedPreTrainer
 
 # GLOBALS
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -25,6 +26,7 @@ def train_incremental_model():
     parser = add_incremental_parser_args(parser)  # Add extra parser arguments used in this project
     opt = parser.parse_args()
     opt = validate_options(parser, opt)
+    opt = validate_incremental_parser_args(parser, opt)  # Validate custom parser options
 
     # Prepare logging and data set
     init_logging(opt)
@@ -49,7 +51,7 @@ def train_incremental_model():
     losses, loss_weights = add_incremental_losses(opt, losses, loss_weights)
     checkpoint_path = os.path.join(
         opt.output_dir, opt.load_checkpoint) if opt.resume else None
-    trainer = create_trainer(opt, losses, loss_weights, metrics)
+    trainer = create_pretrainer(opt, losses, loss_weights, metrics)
 
     # Train
     seq2seq, logs = trainer.train(seq2seq, train,
@@ -67,7 +69,19 @@ def add_incremental_parser_args(parser):
                         help="Scale the anticipation loss with some factor,")
     parser.add_argument('--anticipation_loss', choices=["normal", "embeddings"],
                         help='Indicate whether an additional loss term should be imposed on the encoder.')
+    parser.add_argument('--anticipation_pretraining', type=int, default=0,
+                        help="Pre-train the model using only the anticipation loss for a custom number of epochs.")
     return parser
+
+
+def validate_incremental_parser_args(parser, opt):
+    if opt.scale_anticipation_loss and not opt.anticipation_loss:
+        parser.error("Must specify a type of anticipation loss in order to scale it.")
+
+    if opt.anticipation_pretraining and not opt.anticipation_loss:
+        parser.error("Must specify a type of anticipation loss in order to use it for pre-training.")
+
+    return opt
 
 
 def initialize_incremental_model(opt, src, tgt, train):
@@ -145,6 +159,13 @@ def add_incremental_losses(opt, losses, loss_weights):
     losses.extend(incremental_losses)
 
     return losses, loss_weights
+
+
+def create_pretrainer(opt, losses, loss_weights, metrics):
+    return SupervisedPreTrainer(anticipation_pretraining=opt.anticipation_pretraining, loss=losses, metrics=metrics,
+                                loss_weights=loss_weights, batch_size=opt.batch_size,
+                                eval_batch_size=opt.eval_batch_size, checkpoint_every=opt.save_every,
+                                print_every=opt.print_every, expt_dir=opt.output_dir)
 
 
 if __name__ == "__main__":
