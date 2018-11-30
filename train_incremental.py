@@ -48,6 +48,10 @@ def train_incremental_model():
     # Prepare training
     losses, loss_weights, metrics = prepare_losses_and_metrics(
         opt, pad, unk, sos, eos, input_vocab, output_vocab)
+
+    if opt.anticipation_only:
+        losses, loss_weights = [], []
+
     losses, loss_weights = add_incremental_losses(opt, losses, loss_weights)
     checkpoint_path = os.path.join(
         opt.output_dir, opt.load_checkpoint) if opt.resume else None
@@ -71,6 +75,8 @@ def add_incremental_parser_args(parser):
                         help='Indicate whether an additional loss term should be imposed on the encoder.')
     parser.add_argument('--anticipation_pretraining', type=int, default=0,
                         help="Pre-train the model using only the anticipation loss for a custom number of epochs.")
+    parser.add_argument('--anticipation_only', action='store_true',
+                        help='Only train with anticipation loss.')
     return parser
 
 
