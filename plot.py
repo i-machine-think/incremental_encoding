@@ -327,18 +327,18 @@ if __name__ == "__main__":
     # plt.savefig("/Users/dennisulmer/Desktop/left_antcp_attn.png")
 
     # Extreme scaling experiments
-    fig = lc.plot_metric(
-        "nll_loss", title="NLLLoss Left Scaled=0.5",
-        restrict_model=lambda name: "left" in name and "scaled" in name and "3" not in name,
-        color_group=lambda name, _: "green", linestyle="-", alpha=0.3
-    )
-    plt.savefig("/Users/dennisulmer/Desktop/left_nll_05.png")
-    fig = lc.plot_metric(
-        "antcp_loss", title="Anticipation Loss Left Scaled=0.5",
-        restrict_model=lambda name: "left" in name and "scaled" in name and "3" not in name,
-        color_group=lambda name, _: "purple", linestyle="-", alpha=0.3
-    )
-    plt.savefig("/Users/dennisulmer/Desktop/left_antcp_05.png")
+    # fig = lc.plot_metric(
+    #     "nll_loss", title="NLLLoss Left Scaled=0.5",
+    #     restrict_model=lambda name: "left" in name and "scaled" in name and "3" not in name,
+    #     color_group=lambda name, _: "green", linestyle="-", alpha=0.3
+    # )
+    # plt.savefig("/Users/dennisulmer/Desktop/left_nll_05.png")
+    # fig = lc.plot_metric(
+    #     "antcp_loss", title="Anticipation Loss Left Scaled=0.5",
+    #     restrict_model=lambda name: "left" in name and "scaled" in name and "3" not in name,
+    #     color_group=lambda name, _: "purple", linestyle="-", alpha=0.3
+    # )
+    # plt.savefig("/Users/dennisulmer/Desktop/left_antcp_05.png")
 
     # fig = lc.plot_metric(
     #     "nll_loss", title="NLLLoss Left Scaled=0.01",
@@ -365,3 +365,85 @@ if __name__ == "__main__":
     #     color_group=lambda name, _: "purple", linestyle="-", alpha=0.3
     # )
     # plt.savefig("/Users/dennisulmer/Desktop/left_antcp_10.png")
+
+    # Plot losses and accuracies for scaling experiments on test and train
+    def clean_log_data(log_collection):
+        for log in log_collection.logs:
+            for key, value in log.data.items():
+                if "tasks_test_addprim_turn_left.txt" in key:
+                    log.data["Test"] = value
+                    del log.data[key]
+
+        return log_collection
+
+    def restrict_left_scaling_05(name):
+        return "left" in name and "scaled" in name and "amsgrad" not in name and "primleft_" in name
+
+    def distinguish_test_and_train_nll(name, group):
+        return "lime" if "Test" in group else "forestgreen"
+
+    def distinguish_test_and_train_antcp(name, group):
+        return "violet" if "Test" in group else "purple"
+
+    def distinguish_test_and_train_seqacc(name, group):
+        return "lightcoral" if "Test" in group else "maroon"
+
+    lc = clean_log_data(lc)
+
+    fig = lc.plot_metric(
+        "nll_loss", title="NLLLoss Left Scaled=0.5",
+        restrict_model=restrict_left_scaling_05,
+        color_group=distinguish_test_and_train_nll, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/left_nll_05.png")
+    fig = lc.plot_metric(
+        "antcp_loss", title="Anticipation Loss Left Scaled=0.5",
+        restrict_model=restrict_left_scaling_05,
+        color_group=distinguish_test_and_train_antcp, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/left_antcp_05.png")
+    fig = lc.plot_metric(
+        "seq_acc", title="Sequence Accuracy Left Scaled=0.5",
+        restrict_model=restrict_left_scaling_05,
+        color_group=distinguish_test_and_train_seqacc, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/left_seqacc_05.png")
+
+    fig = lc.plot_metric(
+        "nll_loss", title="NLLLoss Left Scaled=100",
+        restrict_model=lambda name: "primleft100" in name,
+        color_group=distinguish_test_and_train_nll, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/left_nll_100.png")
+    fig = lc.plot_metric(
+        "antcp_loss", title="Anticipation Loss Left Scaled=100",
+        restrict_model=lambda name: "primleft100" in name,
+        color_group=distinguish_test_and_train_antcp, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/left_antcp_100.png")
+    fig = lc.plot_metric(
+        "seq_acc", title="Sequence Accuracy Left Scaled=100",
+        restrict_model=lambda name: "primleft100" in name,
+        color_group=distinguish_test_and_train_seqacc, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/left_seqacc_100.png")
+
+    fig = lc.plot_metric(
+        "nll_loss", title="NLLLoss Left Scaled=0.01",
+        restrict_model=lambda name: "primleft001" in name,
+        color_group=distinguish_test_and_train_nll, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/left_nll_001.png")
+    fig = lc.plot_metric(
+        "antcp_loss", title="Anticipation Loss Left Scaled=0.01",
+        restrict_model=lambda name: "primleft001" in name,
+        color_group=distinguish_test_and_train_antcp, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/left_antcp_001.png")
+    fig = lc.plot_metric(
+        "seq_acc", title="Sequence Accuracy Left Scaled=0.01",
+        restrict_model=lambda name: "primleft001" in name,
+        color_group=distinguish_test_and_train_seqacc, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/left_seqacc_001.png")
+

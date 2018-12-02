@@ -81,7 +81,7 @@ def add_incremental_parser_args(parser):
 
 
 def validate_incremental_parser_args(parser, opt):
-    if opt.scale_anticipation_loss and not opt.anticipation_loss:
+    if opt.scale_anticipation_loss != 1.0 and not opt.anticipation_loss:
         parser.error("Must specify a type of anticipation loss in order to scale it.")
 
     if opt.anticipation_pretraining and not opt.anticipation_loss:
