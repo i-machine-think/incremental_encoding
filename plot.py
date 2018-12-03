@@ -447,3 +447,29 @@ if __name__ == "__main__":
     )
     plt.savefig("/Users/dennisulmer/Desktop/left_seqacc_001.png")
 
+    # Plot models with only nll-loss or anctp-loss
+    fig = lc.plot_metric(
+        "nll_loss", title="NLLLoss Only",
+        restrict_model=lambda name: "nlll_only" in name,
+        color_group=distinguish_test_and_train_nll, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/nll_only_loss.png")
+    fig = lc.plot_metric(
+        "seq_acc", title="Sequence Accuracy NLLLoss Only",
+        restrict_model=lambda name: "nlll_only" in name,
+        color_group=distinguish_test_and_train_seqacc, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/nll_only_seqacc.png")
+
+    fig = lc.plot_metric(
+        "antcp_loss", title="Anticipation Loss Only",
+        restrict_model=lambda name: "antcp_only" in name,
+        color_group=distinguish_test_and_train_antcp, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/antcp_only_loss.png")
+    fig = lc.plot_metric(
+        "seq_acc", title="Sequence Accuracy Anticipation Loss Only",
+        restrict_model=lambda name: "antcp_only" in name,
+        color_group=distinguish_test_and_train_seqacc, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/antcp_only_seqacc.png")
