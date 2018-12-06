@@ -473,3 +473,62 @@ if __name__ == "__main__":
         color_group=distinguish_test_and_train_seqacc, show_figure=False, linestyle="-", alpha=0.3
     )
     plt.savefig("/Users/dennisulmer/Desktop/antcp_only_seqacc.png")
+
+    # Plot pre-training results
+    fig = lc.plot_metric(
+        "nll_loss", title="NLLLoss Pre-training 5",
+        restrict_model=lambda name: "pre5" in name,
+        color_group=distinguish_test_and_train_nll, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/nll_pre5.png")
+    fig = lc.plot_metric(
+        "antcp_loss", title="Anticipation Loss Pre-training 5",
+        restrict_model=lambda name: "pre5" in name,
+        color_group=distinguish_test_and_train_antcp, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/antcp_pre5.png")
+    fig = lc.plot_metric(
+        "seq_acc", title="Sequence Accuracy Pre-training 5",
+        restrict_model=lambda name: "pre5" in name,
+        color_group=distinguish_test_and_train_seqacc, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/seqacc_pre5.png")
+
+
+    fig = lc.plot_metric(
+        "nll_loss", title="NLLLoss Pre-training 10",
+        restrict_model=lambda name: "pre10" in name,
+        color_group=distinguish_test_and_train_nll, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/nll_pr105.png")
+    fig = lc.plot_metric(
+        "antcp_loss", title="Anticipation Loss Pre-training 10",
+        restrict_model=lambda name: "pre10" in name,
+        color_group=distinguish_test_and_train_antcp, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/antcp_pre10.png")
+    fig = lc.plot_metric(
+        "seq_acc", title="Sequence Accuracy Pre-training 10",
+        restrict_model=lambda name: "pre10" in name,
+        color_group=distinguish_test_and_train_seqacc, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/seqacc_pre10.png")
+
+    fig = lc.plot_metric(
+        "nll_loss", title="NLLLoss Pre-training 20",
+        restrict_model=lambda name: "pre20" in name,
+        color_group=distinguish_test_and_train_nll, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/nll_pre20.png")
+    fig = lc.plot_metric(
+        "antcp_loss", title="Anticipation Loss Pre-training 20",
+        restrict_model=lambda name: "pre20" in name,
+        color_group=distinguish_test_and_train_antcp, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/antcp_pre20.png")
+    fig = lc.plot_metric(
+        "seq_acc", title="Sequence Accuracy Pre-training 20",
+        restrict_model=lambda name: "pre20" in name,
+        color_group=distinguish_test_and_train_seqacc, show_figure=False, linestyle="-", alpha=0.3
+    )
+    plt.savefig("/Users/dennisulmer/Desktop/seqacc_pre20.png")
