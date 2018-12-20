@@ -5,7 +5,7 @@ Implementing metrics in order to measure the degree to which a model processes i
 # EXT
 from machine.metrics.metrics import Metric
 import torch
-import torch.nn as nn
+import torch.nn.functional as F
 
 
 class AverageIntegrationRatio(Metric):
@@ -35,12 +35,11 @@ class AverageIntegrationRatio(Metric):
         self.batch_ratio = 0
 
     def eval_batch(self, outputs, targets):
-        targets = targets["input_variables"]  # Input embeddings
-        outputs = outputs["encoder_outputs"]  # Hidden states
-        batch_size = targets.size(0)
-        timesteps = targets.size(1)
-        embedding_dim = targets.size(2)
-        hidden_dim = outputs.size(2)
+        hidden = targets["encoder_hidden"]  # Input embeddings
+        embeddings = targets["encoder_embeddings"]  # Hidden states
+        timesteps, batch_size, hidden_dim = hidden.size()
+        hidden = hidden.view(batch_size, timesteps, hidden_dim)  # Reshape into more intuitive order
+        embedding_dim = embeddings.size(2)
         ratios = torch.zeros(batch_size, timesteps - 1)
 
         # Check if dimensionality corresponds for embeddings and hidden states
@@ -49,14 +48,16 @@ class AverageIntegrationRatio(Metric):
 
         # Calculate ratios
         for t in range(1, timesteps):
-            h_t, h_previous, x_t = outputs[:, t], outputs[:, t - 1], targets[:, t]
+            h_t, h_previous, x_t = hidden[:, t], hidden[:, t - 1], embeddings[:, t]
 
-            delta_x = nn.PairwiseDistance(h_t - x_t)
-            delta_h = nn.PairwiseDistance(h_t - h_previous)
+            delta_x = F.pairwise_distance(h_t, x_t, p=2, keepdim=True)
+            delta_h = F.pairwise_distance(h_t, h_previous, p=2, keepdim=True)
 
-            ratios[:, t - 1] = torch.min(delta_x, delta_h, dim=1)
+            compared = torch.cat((delta_x / delta_h, delta_h / delta_x), dim=1)
+            minimum_score, _ = torch.min(compared, dim=1)
+            ratios[:, t - 1] = minimum_score
 
-        self.batch_ratio = ratios.view(1, batch_size * timesteps).sum() / (batch_size * timesteps)
+        self.batch_ratio = ratios.view(batch_size * (timesteps - 1)).sum() / (batch_size * timesteps)
 
 
 

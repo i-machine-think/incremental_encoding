@@ -24,7 +24,7 @@ class IncrementalSeq2Seq(Seq2seq):
         self.use_embeddings = use_embeddings
 
     def forward(self, input_variable, input_lengths=None, target_variable=None, teacher_forcing_ratio=0):
-        encoder_outputs, encoder_hidden, encoder_predictions = self.encoder_module(input_variable, input_lengths)
+        encoder_outputs, encoder_hidden, encoder_predictions, encoder_embeddings = self.encoder_module(input_variable, input_lengths)
 
         decoder_outputs, decoder_hidden, other = self.decoder_module(
             inputs=target_variable["decoder_output"],
@@ -43,6 +43,11 @@ class IncrementalSeq2Seq(Seq2seq):
         else:
             other["encoder_predicted_embeddings"] = encoder_predictions
             other["shifted_input_embeddings"] = self.encoder.embedding(input_variable[:, 1:])
+
+        # Use for evaluation
+        encoder_hidden = torch.cat(encoder_hidden, dim=0)
+        other["encoder_hidden"] = encoder_hidden
+        other["encoder_embeddings"] = encoder_embeddings
 
         return decoder_outputs, decoder_hidden, other
 
@@ -63,6 +68,9 @@ class AnticipatingEncoderRNN(EncoderRNN):
     def forward(self, input_var, input_lengths=None):
         output, hidden = super().forward(input_var, input_lengths)
 
+        # Save for evaluation purposes
+        embeddings = self.embedding(input_var)
+
         # Try to predict next word in sequence
         encoder_predictions = []
 
@@ -76,7 +84,7 @@ class AnticipatingEncoderRNN(EncoderRNN):
             predictive_dist = F.log_softmax(predictive_dist)
             encoder_predictions.append(predictive_dist)
 
-        return output, hidden, encoder_predictions
+        return output, hidden, encoder_predictions, embeddings
 
 
 class AnticipatingEmbeddingEncoderRNN(AnticipatingEncoderRNN):

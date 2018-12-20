@@ -10,7 +10,7 @@ from machine.models import EncoderRNN, DecoderRNN, Seq2seq
 from train_model import init_argparser, validate_options, init_logging, prepare_dataset, prepare_losses_and_metrics, \
     load_model_from_checkpoint
 
-from incremental import AnticipatingEncoderRNN, IncrementalSeq2Seq, AnticipatingEmbeddingEncoderRNN
+from incremental_models import AnticipatingEncoderRNN, IncrementalSeq2Seq, AnticipatingEmbeddingEncoderRNN
 from incremental_loss import AnticipationLoss, AnticipationEmbeddingLoss
 from custom_trainer import SupervisedPreTrainer
 
