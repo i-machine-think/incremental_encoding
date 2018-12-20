@@ -17,6 +17,7 @@ from machine.evaluator import Evaluator
 from incremental_metrics import AverageIntegrationRatio
 
 # GLOBALS
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 METRICS = {
     "integration_ratio": AverageIntegrationRatio
 }
@@ -46,7 +47,7 @@ def main():
     # Evaluate model on test set
 
     evaluator = IncrementalEvaluator(metrics=metrics, batch_size=opt.batch_size)
-    _, metrics = evaluator.evaluate(seq2seq, test, SupervisedTrainer.get_batch_data)
+    metrics = evaluator.evaluate(seq2seq, test, SupervisedTrainer.get_batch_data)
 
     print(["{}: {:6f}".format(type(metric).__name__, metric.get_val()) for metric in metrics])
 
@@ -69,6 +70,55 @@ class IncrementalEvaluator(Evaluator):
 
         for metric in metrics:
             metric.eval_batch(outputs, other)
+
+        return metrics
+
+    def evaluate(self, model, data, get_batch_data):
+        """ Evaluate a model on given dataset and return performance.
+
+        Args:
+            model (machine.models): model to evaluate
+            data (machine.dataset.dataset.Dataset): dataset to evaluate against
+
+        Returns:
+            loss (float): loss of the given model on the given dataset
+            accuracy (float): accuracy of the given model on the given dataset
+        """
+        # If the model was in train mode before this method was called, we make sure it still is
+        # after this method.
+        previous_train_mode = model.training
+        model.eval()
+
+        metrics = self.metrics
+        for metric in metrics:
+            metric.reset()
+
+        # create batch iterator
+        batch_iterator = torchtext.data.BucketIterator(
+            dataset=data, batch_size=self.batch_size,
+            sort=True, sort_key=lambda x: len(x.src),
+            device=device, train=False)
+
+        # loop over batches
+        with torch.no_grad():
+            for batch in batch_iterator:
+                input_variable, input_lengths, target_variable = get_batch_data(
+                    batch)
+
+                decoder_outputs, decoder_hidden, other = model(
+                    input_variable, input_lengths.tolist(), target_variable
+                )
+
+                # Get other necessary information for eval
+                encoder_results = model.encoder_module(input_variable, input_lengths)
+                other["encoder_hidden"] = encoder_results[1]
+                other["encoder_embeddings"] = model.encoder_module.embedding(input_variable)
+
+                # Compute metric(s) over one batch
+                metrics = self.update_batch_metrics(
+                    metrics, other, target_variable)
+
+        model.train(previous_train_mode)
 
         return metrics
 

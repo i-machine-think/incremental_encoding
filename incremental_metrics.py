@@ -37,6 +37,7 @@ class AverageIntegrationRatio(Metric):
     def eval_batch(self, outputs, targets):
         hidden = targets["encoder_hidden"]  # Input embeddings
         embeddings = targets["encoder_embeddings"]  # Hidden states
+        hidden = torch.cat(hidden, dim=0)
         timesteps, batch_size, hidden_dim = hidden.size()
         hidden = hidden.view(batch_size, timesteps, hidden_dim)  # Reshape into more intuitive order
         embedding_dim = embeddings.size(2)
