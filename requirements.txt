@@ -7,3 +7,4 @@ six
 mock
 matplotlib
 https://github.com/i-machine-think/machine.git
+sklearn
