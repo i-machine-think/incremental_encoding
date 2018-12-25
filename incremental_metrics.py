@@ -214,6 +214,8 @@ class DiagnosticClassifierAccuracy(Metric):
     def reset(self):
         self.classifiers_trained = False
         self.dataset = ActivationsDataset(self.max_len, self.pad)
+        self.classifiers = {}
+        self.accuracies = {}
 
     def train_classifiers(self):
         # Generate target tokens to predict
