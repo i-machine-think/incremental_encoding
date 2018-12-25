@@ -6,7 +6,7 @@ Test the incrementality of a model by computing different scores.
 import argparse
 
 # EXT
-from train_model import  load_model_from_checkpoint  # machine
+from train_model import load_model_from_checkpoint  # machine
 import torch
 from machine.trainer import SupervisedTrainer
 from machine.dataset import SourceField, TargetField
@@ -14,12 +14,15 @@ import torchtext
 from machine.evaluator import Evaluator
 
 # PROJECT
-from incremental_metrics import AverageIntegrationRatio
+from incremental_metrics import AverageIntegrationRatio, DiagnosticClassifierAccuracy, \
+    WeighedDiagnosticClassifierAccuracy
 
 # GLOBALS
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 METRICS = {
-    "integration_ratio": AverageIntegrationRatio
+    "integration_ratio": AverageIntegrationRatio,
+    "dc_accuracy": DiagnosticClassifierAccuracy,
+    "wdc_accuracy": WeighedDiagnosticClassifierAccuracy
 }
 
 
@@ -40,8 +43,9 @@ def main():
 
     # Prepare model
     seq2seq, input_vocab, output_vocab = load_model_from_checkpoint(opt, src, tgt)
+    pad = output_vocab.stoi[tgt.pad_token]
 
-    metrics = [METRICS[metric]() for metric in opt.metrics]
+    metrics = [METRICS[metric](max_len=opt.max_len, pad=pad, n=3) for metric in opt.metrics]
 
     #################################################################################
     # Evaluate model on test set
@@ -110,8 +114,9 @@ class IncrementalEvaluator(Evaluator):
                 )
 
                 # Get other necessary information for eval
+                other["input_sequences"] = input_variable
                 encoder_results = model.encoder_module(input_variable, input_lengths)
-                other["encoder_hidden"] = encoder_results[1]
+                other["encoder_hidden"] = encoder_results[0]
                 other["encoder_embeddings"] = model.encoder_module.embedding(input_variable)
 
                 # Compute metric(s) over one batch
@@ -148,8 +153,8 @@ def init_argparser():
 
     # Model arguments
     parser.add_argument('--test', help='Testing data')
-    parser.add_argument('--metrics', nargs='+', default=['seq_acc'], choices=["integration_ratio"],
-                        help='Metrics to use')
+    parser.add_argument('--metrics', nargs='+', default=['seq_acc'],
+                        choices=["integration_ratio", "dc_accuracy", "wdc_accuracy"], help='Metrics to use')
     parser.add_argument('--batch_size', type=int,
                         help='Batch size', default=1)
     # Data management

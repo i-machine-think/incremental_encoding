@@ -31,7 +31,7 @@ class AverageIntegrationRatio(Metric):
     _SHORTNAME = "intratio"
     _INPUT = "seqlist"
 
-    def __init__(self):
+    def __init__(self, **kwargs):
         super().__init__(self._NAME, self._SHORTNAME, self._INPUT)
         self.batch_ratio = 0
 
@@ -44,9 +44,7 @@ class AverageIntegrationRatio(Metric):
     def eval_batch(self, outputs, targets):
         hidden = targets["encoder_hidden"]  # Input embeddings
         embeddings = targets["encoder_embeddings"]  # Hidden states
-        hidden = torch.cat(hidden, dim=0)
-        timesteps, batch_size, hidden_dim = hidden.size()
-        hidden = hidden.view(batch_size, timesteps, hidden_dim)  # Reshape into more intuitive order
+        batch_size, timesteps, hidden_dim = hidden.size()
         embedding_dim = embeddings.size(2)
         ratios = torch.zeros(batch_size, timesteps - 1)
 
@@ -74,28 +72,49 @@ class ActivationsDataset:
     Classifiers.
     """
 
-    def __init__(self, max_len, pad):
-        self.max_len = max_len
+    def __init__(self, max_len, pad, **kwargs):
+        self.max_allowed_len = max_len
+        self.max_found_len = 0
         self.pad = pad
-        self.sentence_activations = np.empty((0, max_len))
+        self.sentence_activations = None
         self.sentence_tokens = np.empty((0, max_len))
+        self.hidden_dim = -1
+        self._targets = None
 
     def add_batch(self, activations: torch.Tensor, tokens: torch.Tensor):
         """
         Add a batch of activation and tokens to the data set and convert it to numpy.
         """
-        self.sentence_activations.concatenate(activations.cpu().numpy(), axis=0)
-        self.sentence_tokens.concatenate(tokens.cpu().numpy(), axis=0)
+        # Infer hidden state dimensionality from first sample
+        if self.sentence_activations is None:
+            _, _, self.hidden_dim = activations.size()
+            self.sentence_activations = np.empty((0, self.max_allowed_len, self.hidden_dim))
 
-    def select_targets(self, selection_func=None):
+        batch_size, num_activations, _ = activations.size()
+        if num_activations > self.max_found_len:
+            self.max_found_len = num_activations
+
+        # Add activations
+        new_activations = np.zeros((batch_size, self.max_allowed_len, self.hidden_dim)) + self.pad
+        activations = activations.cpu().numpy()
+        new_activations[:, :activations.shape[1], :] = activations
+        self.sentence_activations = np.concatenate((self.sentence_activations, new_activations), axis=0)
+
+        # Add tokens
+        new_tokens = np.zeros((batch_size, self.max_allowed_len)) + self.pad
+        tokens = tokens.cpu().numpy()
+        new_tokens[:, :tokens.shape[1]] = tokens
+        self.sentence_tokens = np.concatenate((self.sentence_tokens, new_tokens), axis=0)
+
+    def select_targets(self, selection_func=None, **selection_kwargs):
         """
         Select the target tokens to be selected at each time step.
         """
         targets = []
         selection_func = selection_func if selection_func is not None else self.select_by_freq
 
-        for t in range(self.max_len):
-            targets.append(selection_func(self.sentence_tokens[:, t]))
+        for t in range(self.max_allowed_len):
+            targets.append(selection_func(self.sentence_tokens[:, t], **selection_kwargs))
 
         return targets
 
@@ -103,10 +122,11 @@ class ActivationsDataset:
         """
         Select Diagnostic classifier targets by frequency (ignoring the padding token).
         """
-        target_column = target_column.delete(target_column == self.pad)  # Don't count padding tokens
+        target_column = target_column[target_column != self.pad]  # Don't count padding tokens
         target_freqs = itemfreq(target_column)
-        target_freqs = target_freqs.sort(axis=1)[::-1]
-        targets = target_freqs[:, :n]  # Only pick n most common targets
+        target_freqs.sort(axis=1)
+        target_freqs = target_freqs[::-1]  # Sort in descending order
+        targets = target_freqs[:n, 0]  # Only pick n most common targets
 
         return targets
 
@@ -122,19 +142,21 @@ class ActivationsDataset:
         y_values = self.sentence_tokens[:, t_prime]  # All tokens at time step t_prime
         y = y_values == target  # 1 where the token in question is the target token
 
-        positive_label_weight = np.sum(y) / y.shape[0]
+        positive_label_weight = np.sum(y.astype(int)) / y.shape[0]
         class_weights = {0: 1 - positive_label_weight, 1: positive_label_weight}
 
         train_indices, test_indices = self._split_set(X)
-        X_train, y_train = X[train_indices, :]
-        X_test, y_test = X[test_indices, :]
+        X_train, y_train = X[train_indices, :], y[train_indices]
+        X_test, y_test = X[test_indices, :], y[test_indices]
 
         return X_train, y_train, X_test, y_test, class_weights
 
     @staticmethod
     def _split_set(data, ratio=(0.9, 0.1)):
 
-        if not sum(ratio) == 1: raise ValueError('Ratios must sum to 1!')
+        if not sum(ratio) == 1:
+            raise ValueError('Ratios must sum to 1!')
+
         length = data.shape[0]
         train_cutoff = math.floor(length * ratio[0])
 
@@ -159,23 +181,35 @@ class DiagnosticClassifierAccuracy(Metric):
     _SHORTNAME = "dc_acc"
     _INPUT = "seqlist"
 
-    def __init__(self, max_len, pad, selection_func=None):
+    def __init__(self, max_len, pad, selection_func=None, **selection_kwargs):
         super().__init__(self._NAME, self._SHORTNAME, self._INPUT)
         self.classifiers_trained = False  # Check whether classifiers have already been trained
         self.max_len = max_len
         self.pad = pad
         self.dataset = ActivationsDataset(max_len, pad)
         self.selection_func = selection_func
+        self.selection_kwargs = selection_kwargs
         self.classifiers = {}
         self.accuracies = {}
 
     def eval_batch(self, outputs, targets):
         # Only add activations to the data set here
         hidden = targets["encoder_hidden"]
-        self.dataset.add(hidden, targets)
+        tokens = targets["input_sequences"]
+        self.dataset.add_batch(hidden, tokens)
 
     def get_val(self):
-        ... # TODO
+        # Only train classifiers once
+        if not self.classifiers_trained:
+            self.train_classifiers()
+
+        acc = sum([
+            self.weight(t, t_prime, target) * accuracy
+            for (t, t_prime, target), accuracy in self.accuracies.items()
+        ])
+        acc *= self.norm_factor
+
+        return acc
 
     def reset(self):
         self.classifiers_trained = False
@@ -185,13 +219,25 @@ class DiagnosticClassifierAccuracy(Metric):
         # Generate target tokens to predict
         targets_per_timestep = self.dataset.select_targets(self.selection_func)
 
+        # Train one classifier per target per time step to the end of the sequence
+        T = self.dataset.max_found_len
+        num_classifiers = sum([
+            (T - t) * len(targets)
+            for t, targets in zip(range(1, T), targets_per_timestep[:T])
+        ])
+        current_classifier = 1
+
         # Now train a whole lot of classifiers and store their accuracies
         # Skip first time step as there wouldn't be anything to predict
-        for t in range(1, self.max_len):
+        for t in range(1, T):
             for t_prime, targets in zip(range(0, t), targets_per_timestep[:t]):
                 for target in targets:
-                    # Train
-                    X_train, y_train, X_test, y_test, class_weights = self.dataset.generate_training_data(t, t_prime, target)
+                    print(f"\rTrained {current_classifier}/{num_classifiers} Diagnostic classifiers...", end="", flush=True)
+
+                    # Train Diagnostic Classifier
+                    X_train, y_train, X_test, y_test, class_weights = self.dataset.generate_training_data(
+                        t, t_prime, target
+                    )
                     dg = LogisticRegression(class_weight=class_weights)
                     dg.fit(X_train, y_train)
 
@@ -201,16 +247,20 @@ class DiagnosticClassifierAccuracy(Metric):
 
                     # Save everything
                     key = (t, t_prime, target)
-                    self.classifiers[key] = dg, self.accuracies[key] = acc
+                    self.classifiers[key], self.accuracies[key] = dg, acc
 
+                    current_classifier += 1
 
+        self.classifiers_trained = True
+        print("")
 
-    def weight(self, **args):
-        ...  # TODO
+    @staticmethod
+    def weight(*args):
+        return 1
 
-    @@property
+    @property
     def norm_factor(self):
-        ...  # TODO
+        return 1 / len(self.classifiers)
 
 
 class WeighedDiagnosticClassifierAccuracy(DiagnosticClassifierAccuracy):
@@ -218,8 +268,21 @@ class WeighedDiagnosticClassifierAccuracy(DiagnosticClassifierAccuracy):
     Same as DiagnosticClassifierAccuracy, but the accuracies are weighed by the distance between the time step of the
     hidden activations used as input and the time step of the token to predict.
     """
-    ...  # TODO
+    @staticmethod
+    def weight(t, t_prime, *args):
+        return t - t_prime
 
+    @property
+    def norm_factor(self):
+        T = self.dataset.max_found_len
+        targets_per_timestep = self.dataset.select_targets()
 
+        norm = 0
 
+        # Normalize by sum of distances between the time step of which the activatios are used and the time step of the
+        # target to be predicted; also consider how many different targets are weighed by this factor
+        for t in range(1, T):
+            for t_prime, targets in zip(range(0, t), targets_per_timestep[:t]):
+                norm += (t - t_prime) * len(targets)
 
+        return 1 / norm
