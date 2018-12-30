@@ -347,7 +347,7 @@ class RepresentationalSimilarity(Metric):
         self.dataset = ActivationsDataset(max_len, pad)
         self.similarities_calculated = False  # Check whether similarities have already been calculated
         self.average_distances = [defaultdict(float) for _ in range(max_len)]
-        self.comparison_distances = 0  # Average distance of all targets of all time steps
+        self.representational_sim = 0  # Average distance of all targets of all time steps
 
     def eval_batch(self, outputs, targets):
         # Only add activations to the data set here
@@ -359,7 +359,7 @@ class RepresentationalSimilarity(Metric):
         if not self.similarities_calculated:
             self.calculate_similarities()
 
-        return self.comparison_distances
+        return self.representational_sim
 
     def reset(self):
         self.similarities_calculated = False
@@ -382,7 +382,7 @@ class RepresentationalSimilarity(Metric):
                 self.average_distances[t][target] = average_distance
                 global_cumulative_distances += average_distance
 
-        self.comparison_distances = global_cumulative_distances / global_norm
+        self.representational_sim = global_cumulative_distances / global_norm
 
     @staticmethod
     def calculate_average_distance(activations):
@@ -393,7 +393,9 @@ class RepresentationalSimilarity(Metric):
         norm_factor = num_activations * (num_activations - 1) / 2  # Number of comparisons to make
         cumulative_distance = 0
 
-        for i in range(num_activations):
+        # Compute distances between pairs of activations
+        # Do not consider: Distance of activation to itself and for a pair that has been computed earlier
+        for i in range(num_activations - 1):
             for j in range(i + 1, num_activations):
                 distance = linalg.norm(activations[i, :] - activations[j, :])
                 cumulative_distance += distance
