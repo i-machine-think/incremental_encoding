@@ -5,6 +5,7 @@ Implementing metrics in order to measure the degree to which a model processes i
 # STD
 import random
 import math
+from collections import defaultdict
 
 # EXT
 from machine.metrics.metrics import Metric
@@ -13,6 +14,7 @@ import torch.nn.functional as F
 from sklearn.linear_model import LogisticRegression
 import numpy as np
 from scipy.stats import itemfreq
+import numpy.linalg as linalg
 
 
 class AverageIntegrationRatio(Metric):
@@ -151,6 +153,21 @@ class ActivationsDataset:
 
         return X_train, y_train, X_test, y_test, class_weights
 
+    def get_target_activations_at_timestep(self, t, target):
+        """
+        Select the activations of a target token for a specific time step inside the data set.
+
+        :param t: Time step which activations should be used.
+        :param target: Target which activations should be used.
+        :return: Numpy array of targets at time step found times activation dimensionality
+        """
+        activations = self.sentence_activations[:, t]  # All activations at time step t
+        tokens = self.sentence_tokens[:, t]  # All tokens at time step t
+        target_tokens = tokens == target  # Places where the token is the target token
+        selected_activations = activations[target_tokens, :]  # Activations of target token at time step t
+
+        return selected_activations
+
     @staticmethod
     def _split_set(data, ratio=(0.9, 0.1)):
 
@@ -234,7 +251,10 @@ class DiagnosticClassifierAccuracy(Metric):
         for t in range(1, T):
             for t_prime, targets in zip(range(0, t), targets_per_timestep[:t]):
                 for target in targets:
-                    print(f"\rTrained {current_classifier}/{num_classifiers} Diagnostic classifiers...", end="", flush=True)
+                    print(
+                        f"\rTrained {current_classifier}/{num_classifiers} Diagnostic classifiers...",
+                        end="", flush=True
+                    )
 
                     # Train Diagnostic Classifier
                     X_train, y_train, X_test, y_test, class_weights = self.dataset.generate_training_data(
@@ -270,6 +290,10 @@ class WeighedDiagnosticClassifierAccuracy(DiagnosticClassifierAccuracy):
     Same as DiagnosticClassifierAccuracy, but the accuracies are weighed by the distance between the time step of the
     hidden activations used as input and the time step of the token to predict.
     """
+    _NAME = "Weighed Diagnostic Classifier Accuracy"
+    _SHORTNAME = "wdc_acc"
+    _INPUT = "seqlist"
+
     @staticmethod
     def weight(t, t_prime, *args):
         return t - t_prime
@@ -281,10 +305,97 @@ class WeighedDiagnosticClassifierAccuracy(DiagnosticClassifierAccuracy):
 
         norm = 0
 
-        # Normalize by sum of distances between the time step of which the activatios are used and the time step of the
+        # Normalize by sum of distances between the time step of which the activations are used and the time step of the
         # target to be predicted; also consider how many different targets are weighed by this factor
         for t in range(1, T):
             for t_prime, targets in zip(range(0, t), targets_per_timestep[:t]):
                 norm += (t - t_prime) * len(targets)
 
         return 1 / norm
+
+
+class RepresentationalSimilarity(Metric):
+    """
+    A metric expressing the similarity between hidden states concerning the same token during processing.
+    We would expect the hidden states to be more similar for an incremental model after processing the same token after
+    an arbitrary prefix than for the baseline model. E.g. consider the sequences
+
+    t1 t2 t3
+    --------
+    XX T1 XX
+    XX XX XX
+
+    where T1 is a specific token and XX are arbitrary tokens. Here we would expect the representations for sequence 1
+    to be more similar after encoding t3 for a model with incremental capabilities.
+    We can quantify this difference by calculating the average euclidean distance over all hidden representations
+    encoded at t1.
+
+    In essence, the final score expresses the distance between activations produced after processing the same input
+    token at the same time step, averaged over all target tokens selected over all time steps in the data set (selected
+    tokens depend on the selection function, default is all n most frequent tokens at that time step).
+    """
+    _NAME = "Representational Similarity"
+    _SHORTNAME = "repsim"
+    _INPUT = "seqlist"
+
+    def __init__(self, max_len, pad, selection_func=None, **selection_kwargs):
+        super().__init__(self._NAME, self._SHORTNAME, self._INPUT)
+        self.max_len = max_len
+        self.pad = pad
+        self.selection_func = selection_func
+        self.selection_kwargs = selection_kwargs
+        self.dataset = ActivationsDataset(max_len, pad)
+        self.similarities_calculated = False  # Check whether similarities have already been calculated
+        self.average_distances = [defaultdict(float) for _ in range(max_len)]
+        self.comparison_distances = 0  # Average distance of all targets of all time steps
+
+    def eval_batch(self, outputs, targets):
+        # Only add activations to the data set here
+        hidden = targets["encoder_hidden"]
+        tokens = targets["input_sequences"]
+        self.dataset.add_batch(hidden, tokens)
+
+    def get_val(self):
+        if not self.similarities_calculated:
+            self.calculate_similarities()
+
+        return self.comparison_distances
+
+    def reset(self):
+        self.similarities_calculated = False
+        self.dataset = ActivationsDataset(self.max_len, self.pad)
+        self.average_distances = [defaultdict(float) for _ in range(self.max_len)]
+
+    def calculate_similarities(self):
+        # Generate target tokens calculate similarities for
+        targets_per_timestep = self.dataset.select_targets(self.selection_func)
+        T = self.dataset.max_found_len
+        global_norm = sum([len(targets) for targets in targets_per_timestep])
+        global_cumulative_distances = 0
+
+        # Calculate average distances
+        for t in range(T):
+            for target in targets_per_timestep[t]:
+                # Activations for target tokens at time step t that are found in data set.
+                target_activations = self.dataset.get_target_activations_at_timestep(t, target)
+                average_distance = self.calculate_average_distance(target_activations)
+                self.average_distances[t][target] = average_distance
+                global_cumulative_distances += average_distance
+
+        self.comparison_distances = global_cumulative_distances / global_norm
+
+    @staticmethod
+    def calculate_average_distance(activations):
+        """
+        Calculate the average euclidean distance between activations.
+        """
+        num_activations = activations.shape[0]
+        norm_factor = num_activations * (num_activations - 1) / 2  # Number of comparisons to make
+        cumulative_distance = 0
+
+        for i in range(num_activations):
+            for j in range(i + 1, num_activations):
+                distance = linalg.norm(activations[i, :] - activations[j, :])
+                cumulative_distance += distance
+
+        return cumulative_distance / norm_factor

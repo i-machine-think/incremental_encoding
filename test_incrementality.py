@@ -15,14 +15,15 @@ from machine.evaluator import Evaluator
 
 # PROJECT
 from incremental_metrics import AverageIntegrationRatio, DiagnosticClassifierAccuracy, \
-    WeighedDiagnosticClassifierAccuracy
+    WeighedDiagnosticClassifierAccuracy, RepresentationalSimilarity
 
 # GLOBALS
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 METRICS = {
     "integration_ratio": AverageIntegrationRatio,
     "dc_accuracy": DiagnosticClassifierAccuracy,
-    "wdc_accuracy": WeighedDiagnosticClassifierAccuracy
+    "wdc_accuracy": WeighedDiagnosticClassifierAccuracy,
+    "repr_sim": RepresentationalSimilarity
 }
 
 
@@ -154,7 +155,7 @@ def init_argparser():
     # Model arguments
     parser.add_argument('--test', help='Testing data')
     parser.add_argument('--metrics', nargs='+', default=['seq_acc'],
-                        choices=["integration_ratio", "dc_accuracy", "wdc_accuracy"], help='Metrics to use')
+                        choices=["integration_ratio", "dc_accuracy", "wdc_accuracy", "repr_sim"], help='Metrics to use')
     parser.add_argument('--batch_size', type=int,
                         help='Batch size', default=1)
     # Data management
