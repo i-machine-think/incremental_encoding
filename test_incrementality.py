@@ -26,6 +26,9 @@ METRICS = {
     "repr_sim": RepresentationalSimilarity
 }
 
+# CONSTANTS
+TOP_N = 3
+
 
 def main():
     parser = init_argparser()
@@ -46,7 +49,7 @@ def main():
     seq2seq, input_vocab, output_vocab = load_model_from_checkpoint(opt, src, tgt)
     pad = output_vocab.stoi[tgt.pad_token]
 
-    metrics = [METRICS[metric](max_len=opt.max_len, pad=pad, n=3) for metric in opt.metrics]
+    metrics = [METRICS[metric](max_len=opt.max_len, pad=pad, n=TOP_N) for metric in opt.metrics]
 
     #################################################################################
     # Evaluate model on test set
@@ -102,7 +105,8 @@ class IncrementalEvaluator(Evaluator):
         batch_iterator = torchtext.data.BucketIterator(
             dataset=data, batch_size=self.batch_size,
             sort=True, sort_key=lambda x: len(x.src),
-            device=device, train=False)
+            device=device, train=False
+        )
 
         # loop over batches
         with torch.no_grad():

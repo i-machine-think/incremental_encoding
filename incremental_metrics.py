@@ -38,7 +38,7 @@ class AverageIntegrationRatio(Metric):
         self.batch_ratio = 0
 
     def get_val(self):
-        return self.batch_ratio
+        return self.batch_ratio.cpu().numpy()
 
     def reset(self):
         self.batch_ratio = 0
@@ -51,7 +51,7 @@ class AverageIntegrationRatio(Metric):
         ratios = torch.zeros(batch_size, timesteps - 1)
 
         # Check if dimensionality corresponds for embeddings and hidden states
-        assert embedding_dim == hidden_dim, "This metric only work if input embeddings and hidden states are of the" \
+        assert embedding_dim == hidden_dim, "This metric only works if input embeddings and hidden states are of the" \
                                             "same dimensionality"
 
         # Calculate ratios
