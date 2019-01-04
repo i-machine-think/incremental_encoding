@@ -10,9 +10,22 @@ from collections import defaultdict
 from machine.util.checkpoint import Checkpoint
 from machine.trainer import SupervisedTrainer
 from scipy.stats import pearsonr
+import matplotlib.pyplot as plt
 
 # PROJECT
 from test_incrementality import init_argparser, load_test_data, IncrementalEvaluator, METRICS, TOP_N
+from incremental_models import IncrementalSeq2Seq
+
+# CONST
+BASELINE_COLOR = "tab:blue"
+INCREMENTAL_COLOR = "tab:orange"
+
+
+def is_incremental(model):
+    """
+    Test whether a model is of an incremental model class.
+    """
+    return isinstance(model, IncrementalSeq2Seq)
 
 
 def test_metric_correlation(measurements: dict):
@@ -33,7 +46,48 @@ def test_metric_correlation(measurements: dict):
         print(f"{metric_a} | {metric_b}: {rho:.4f}")
         correlations[(metric_a, metric_b)] = rho
 
-    return correlations
+    return correlations, scores
+
+
+def create_metric_scatter_plot(measurements: dict, image_dir: str, correlations: dict=None):
+    """
+    Create scatter plots showing where models fall with respect to two different metrics.
+    """
+    metrics = list(measurements[list(measurements.keys())[0]].keys())  # Get the name of all used metrics
+
+    for metric_a, metric_b in combinations(metrics, 2):
+        # Select two metrics to use as scatter plot axes
+        # Now get the model measurements
+        baseline_x, baseline_y = [], []
+        incremental_x, incremental_y = [], []
+
+        for model, scores in measurements.items():
+            if is_incremental(model):
+                incremental_x.append(scores[metric_a])
+                incremental_y.append(scores[metric_b])
+            else:
+                baseline_x.append(scores[metric_a])
+                baseline_y.append(scores[metric_b])
+
+        # Plot
+        plt.scatter(baseline_x, baseline_y, c=BASELINE_COLOR, marker="x", label="Baseline")
+        plt.scatter(incremental_x, incremental_y, c=INCREMENTAL_COLOR, marker="o", label="Incremental")
+        plt.xlabel(metric_a)
+        plt.ylabel(metric_b)
+        ax = plt.gca()
+        plt.plot(ax.get_xlim(), ax.get_ylim(), ls="--", c=".3")
+        plt.legend()
+
+        # Display correlation coefficient if available
+        if correlations is not None:
+            rho = correlations[(metric_a, metric_b)]
+            plt.text(0.85, 0.025, r"$\rho={:.2f}$".format(rho), transform=plt.gca().transAxes)
+
+        plt.tight_layout()
+        plt.savefig(
+            f"{image_dir}/scatter_{metric_a.lower().replace(' ', '_')}_{metric_b.lower().replace(' ', '_')}.png"
+        )
+        plt.close()
 
 
 def generate_measurements(models: list, metrics: list):
@@ -77,6 +131,7 @@ def load_models_from_paths(paths: list):
 if __name__ == "__main__":
     parser = init_argparser()
     parser.add_argument("--models", nargs="+", help="List of paths to models used to conduct analyses.")
+    parser.add_argument("--img_path", help="Path to directory in which to save generated plots.")
     opt = parser.parse_args()
 
     # Prepare data set
@@ -89,6 +144,7 @@ if __name__ == "__main__":
 
     # Perform analyses
     measurements = generate_measurements(models, metrics)
-    test_metric_correlation(measurements)
+    correlations, _ = test_metric_correlation(measurements)
+    create_metric_scatter_plot(measurements, opt.img_path, correlations)
 
 
