@@ -7,25 +7,17 @@ from itertools import combinations
 from collections import defaultdict
 
 # EXT
-from machine.util.checkpoint import Checkpoint
 from machine.trainer import SupervisedTrainer
 from scipy.stats import pearsonr
 import matplotlib.pyplot as plt
 
 # PROJECT
-from test_incrementality import init_argparser, load_test_data, IncrementalEvaluator, METRICS, TOP_N
-from incremental_models import IncrementalSeq2Seq
+from test_incrementality import init_argparser, load_test_data, IncrementalEvaluator, METRICS, TOP_N, \
+    load_models_from_paths, is_incremental
 
 # CONST
 BASELINE_COLOR = "tab:blue"
 INCREMENTAL_COLOR = "tab:orange"
-
-
-def is_incremental(model):
-    """
-    Test whether a model is of an incremental model class.
-    """
-    return isinstance(model, IncrementalSeq2Seq)
 
 
 def test_metric_correlation(measurements: dict):
@@ -105,29 +97,6 @@ def generate_measurements(models: list, metrics: list):
     return measurements
 
 
-def load_models_from_paths(paths: list):
-    """
-    Load all the models specified in a list of paths.
-    """
-    models = []
-
-    for path in paths:
-        checkpoint = Checkpoint.load(path)
-        models.append(checkpoint.model)
-
-    # Build vocab once
-    input_vocab = checkpoint.input_vocab
-    src.vocab = input_vocab
-    input_vocab = checkpoint.input_vocab
-    src.vocab = input_vocab
-    output_vocab = checkpoint.output_vocab
-    tgt.vocab = output_vocab
-    tgt.eos_id = tgt.vocab.stoi[tgt.SYM_EOS]
-    tgt.sos_id = tgt.vocab.stoi[tgt.SYM_SOS]
-
-    return models, input_vocab, output_vocab
-
-
 if __name__ == "__main__":
     parser = init_argparser()
     parser.add_argument("--models", nargs="+", help="List of paths to models used to conduct analyses.")
@@ -138,7 +107,7 @@ if __name__ == "__main__":
     test, src, tgt = load_test_data(opt)
 
     # Load models
-    models, input_vocab, output_vocab = load_models_from_paths(opt.models)
+    models, input_vocab, output_vocab = load_models_from_paths(opt.models, src, tgt)
     pad = output_vocab.stoi[tgt.pad_token]
     metrics = [METRICS[metric](max_len=opt.max_len, pad=pad, n=TOP_N) for metric in opt.metrics]
 

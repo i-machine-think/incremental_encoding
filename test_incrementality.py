@@ -4,20 +4,25 @@ Test the incrementality of a model by computing different scores.
 
 # STD
 import argparse
+from collections import defaultdict
 
 # EXT
-from train_model import load_model_from_checkpoint  # machine
+from machine.util.checkpoint import Checkpoint
 import torch
 from machine.trainer import SupervisedTrainer
 from machine.dataset import SourceField, TargetField
 import torchtext
 from machine.evaluator import Evaluator
+import numpy as np
+from scipy.stats import ttest_ind
 
 # PROJECT
 from incremental_metrics import AverageIntegrationRatio, DiagnosticClassifierAccuracy, \
     WeighedDiagnosticClassifierAccuracy, RepresentationalSimilarity
 
 # GLOBALS
+from incremental_models import IncrementalSeq2Seq
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 METRICS = {
     "integration_ratio": AverageIntegrationRatio,
@@ -45,19 +50,44 @@ def main():
     # Prepare data set
     test, src, tgt = load_test_data(opt)
 
-    # Prepare model
-    seq2seq, input_vocab, output_vocab = load_model_from_checkpoint(opt, src, tgt)
+    # Load models
+    models, input_vocab, output_vocab = load_models_from_paths(opt.models, src, tgt)
     pad = output_vocab.stoi[tgt.pad_token]
 
     metrics = [METRICS[metric](max_len=opt.max_len, pad=pad, n=TOP_N) for metric in opt.metrics]
 
-    #################################################################################
-    # Evaluate model on test set
+    # Evaluate models on test set
+    baseline_measurements = defaultdict(list)
+    incremental_measurements = defaultdict(list)
 
-    evaluator = IncrementalEvaluator(metrics=metrics, batch_size=opt.batch_size)
-    metrics = evaluator.evaluate(seq2seq, test, SupervisedTrainer.get_batch_data)
+    for model in models:
+        evaluator = IncrementalEvaluator(metrics=metrics, batch_size=opt.batch_size)
+        metrics = evaluator.evaluate(model, test, SupervisedTrainer.get_batch_data)
 
-    print(["{}: {:6f}".format(type(metric).__name__, metric.get_val()) for metric in metrics])
+        print(type(model).__name__)
+        print(
+            "\n".join([f"{metric._NAME:<40}: {metric.get_val():4f}" for metric in metrics])
+        )
+        print("")
+
+        for metric in metrics:
+            if is_incremental(model):
+                incremental_measurements[metric._SHORTNAME].append(metric.get_val())
+            else:
+                baseline_measurements[metric._SHORTNAME].append(metric.get_val())
+
+    # Evaluate all the models together and generate final report
+    print("\nResults per metric")
+    for metric in baseline_measurements.keys():
+        baseline_results, incremental_results = np.array(baseline_measurements[metric]), np.array(incremental_measurements[metric])
+        baseline_avg, baseline_std = baseline_results.mean(), baseline_results.std()
+        incremental_avg, incremental_std = incremental_results.mean(), baseline_results.std()
+        _, p_value = ttest_ind(baseline_results, incremental_results)
+
+        print(
+            f"{metric:<10}: Baseline {baseline_avg:.4f} ±{baseline_std:.2f} | Incremental {incremental_avg:.4f} "
+            f"±{incremental_std:.3f} | p={p_value:.4f}"
+        )
 
 
 class IncrementalEvaluator(Evaluator):
@@ -153,6 +183,36 @@ def load_test_data(opt):
     return test, src, tgt
 
 
+def load_models_from_paths(paths: list, src, tgt):
+    """
+    Load all the models specified in a list of paths.
+    """
+    models = []
+
+    for path in paths:
+        checkpoint = Checkpoint.load(path)
+        models.append(checkpoint.model)
+
+    # Build vocab once
+    input_vocab = checkpoint.input_vocab
+    src.vocab = input_vocab
+    input_vocab = checkpoint.input_vocab
+    src.vocab = input_vocab
+    output_vocab = checkpoint.output_vocab
+    tgt.vocab = output_vocab
+    tgt.eos_id = tgt.vocab.stoi[tgt.SYM_EOS]
+    tgt.sos_id = tgt.vocab.stoi[tgt.SYM_SOS]
+
+    return models, input_vocab, output_vocab
+
+
+def is_incremental(model):
+    """
+    Test whether a model is of an incremental model class.
+    """
+    return isinstance(model, IncrementalSeq2Seq)
+
+
 def init_argparser():
     parser = argparse.ArgumentParser()
 
@@ -163,14 +223,13 @@ def init_argparser():
     parser.add_argument('--batch_size', type=int,
                         help='Batch size', default=1)
     # Data management
-    parser.add_argument('--load_checkpoint',
-                        help='The name of the checkpoint to load, usually an encoded time string')
     parser.add_argument('--cuda_device', default=0,
                         type=int, help='set cuda device to use')
     parser.add_argument('--max_len', type=int,
                         help='Maximum sequence length', default=50)
     parser.add_argument('--output_dir', default='../models',
                         help='Path to model directory. If load_checkpoint is True, then path to checkpoint directory has to be provided')
+    parser.add_argument("--models", nargs="+", help="List of paths to models used to conduct analyses.")
 
     return parser
 
