@@ -8,13 +8,21 @@ import math
 from collections import defaultdict
 
 # EXT
-from machine.metrics.metrics import Metric
+from machine.metrics.metrics import Metric, SequenceAccuracy
 import torch
 import torch.nn.functional as F
 from sklearn.linear_model import LogisticRegression
 import numpy as np
 from scipy.stats import itemfreq
 import numpy.linalg as linalg
+
+
+class SequenceAccuracyWrapper(SequenceAccuracy):
+    """
+    Wrapper for sequence accuracy class in order to make it compatible with the way incremental metrics are used.
+    """
+    def __init__(self, pad, **kwargs):
+        super().__init__(ignore_index=pad)
 
 
 class AverageIntegrationRatio(Metric):

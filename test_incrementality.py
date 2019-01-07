@@ -18,7 +18,7 @@ from scipy.stats import ttest_ind
 
 # PROJECT
 from incremental_metrics import AverageIntegrationRatio, DiagnosticClassifierAccuracy, \
-    WeighedDiagnosticClassifierAccuracy, RepresentationalSimilarity
+    WeighedDiagnosticClassifierAccuracy, RepresentationalSimilarity, SequenceAccuracyWrapper
 
 # GLOBALS
 from incremental_models import IncrementalSeq2Seq
@@ -28,7 +28,8 @@ METRICS = {
     "integration_ratio": AverageIntegrationRatio,
     "dc_accuracy": DiagnosticClassifierAccuracy,
     "wdc_accuracy": WeighedDiagnosticClassifierAccuracy,
-    "repr_sim": RepresentationalSimilarity
+    "repr_sim": RepresentationalSimilarity,
+    "seq_acc": SequenceAccuracyWrapper
 }
 
 # CONSTANTS
@@ -141,22 +142,19 @@ class IncrementalEvaluator(Evaluator):
         # loop over batches
         with torch.no_grad():
             for batch in batch_iterator:
-                input_variable, input_lengths, target_variable = get_batch_data(
-                    batch)
+                input_variable, input_lengths, target_variable = get_batch_data(batch)
 
-                decoder_outputs, decoder_hidden, other = model(
-                    input_variable, input_lengths.tolist(), target_variable
-                )
+                decoder_outputs, decoder_hidden, other = model(input_variable, input_lengths.tolist(), target_variable)
 
                 # Get other necessary information for eval
                 other["input_sequences"] = input_variable
                 encoder_results = model.encoder_module(input_variable, input_lengths)
                 other["encoder_hidden"] = encoder_results[0]
                 other["encoder_embeddings"] = model.encoder_module.embedding(input_variable)
+                other["decoder_output"] = target_variable["decoder_output"]  # Store everything used for eval in other
 
                 # Compute metric(s) over one batch
-                metrics = self.update_batch_metrics(
-                    metrics, other, target_variable)
+                metrics = self.update_batch_metrics(metrics, other, target_variable)
 
         model.train(previous_train_mode)
 
@@ -219,7 +217,8 @@ def init_argparser():
     # Model arguments
     parser.add_argument('--test', help='Testing data')
     parser.add_argument('--metrics', nargs='+', default=['seq_acc'],
-                        choices=["integration_ratio", "dc_accuracy", "wdc_accuracy", "repr_sim"], help='Metrics to use')
+                        choices=["integration_ratio", "dc_accuracy", "wdc_accuracy", "repr_sim", "seq_acc"],
+                        help='Metrics to use')
     parser.add_argument('--batch_size', type=int,
                         help='Batch size', default=1)
     # Data management
@@ -227,8 +226,6 @@ def init_argparser():
                         type=int, help='set cuda device to use')
     parser.add_argument('--max_len', type=int,
                         help='Maximum sequence length', default=50)
-    parser.add_argument('--output_dir', default='../models',
-                        help='Path to model directory. If load_checkpoint is True, then path to checkpoint directory has to be provided')
     parser.add_argument("--models", nargs="+", help="List of paths to models used to conduct analyses.")
 
     return parser

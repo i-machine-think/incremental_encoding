@@ -99,7 +99,6 @@ def generate_measurements(models: list, metrics: list):
 
 if __name__ == "__main__":
     parser = init_argparser()
-    parser.add_argument("--models", nargs="+", help="List of paths to models used to conduct analyses.")
     parser.add_argument("--img_path", help="Path to directory in which to save generated plots.")
     opt = parser.parse_args()
 
