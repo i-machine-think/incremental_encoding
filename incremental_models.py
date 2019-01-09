@@ -15,6 +15,13 @@ import torch.nn.functional as F
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+class EncoderRNNWrapper(EncoderRNN):
+    def __init__(self, vocab_size, max_len, hidden_size, embedding_size, input_dropout_p=0, dropout_p=0, n_layers=1,
+                 bidirectional=False, rnn_cell='gru', variable_lengths=False, **kwargs):
+        super().__init__(vocab_size, max_len, hidden_size, embedding_size, input_dropout_p, dropout_p, n_layers,
+                 bidirectional, rnn_cell, variable_lengths)
+
+
 class IncrementalSeq2Seq(Seq2seq):
     """
     Extension of the Seq2Seq model class to enable more problem-specific capabilities.
@@ -35,14 +42,8 @@ class IncrementalSeq2Seq(Seq2seq):
         )
 
         # Add predictions of the encoder as well as the actual words in the input sequence to compute anticipation loss
-        if not self.use_embeddings:
-            other["encoder_predictions"] = encoder_predictions
-            other["shifted_input_variables"] = input_variable[:, 1:]
-
-        # Use embedding and calculate a MSE loss instead
-        else:
-            other["encoder_predicted_embeddings"] = encoder_predictions
-            other["shifted_input_embeddings"] = self.encoder.embedding(input_variable[:, 1:])
+        other["encoder_predictions"] = encoder_predictions
+        other["shifted_input_variables"] = input_variable[:, 1:]
 
         return decoder_outputs, decoder_hidden, other
 
@@ -53,7 +54,7 @@ class AnticipatingEncoderRNN(EncoderRNN):
     penalized with a loss function similar to the predictions of a decoder.
     """
     def __init__(self, vocab_size, max_len, hidden_size, embedding_size, input_dropout_p=0, dropout_p=0, n_layers=1,
-                 bidirectional=False, rnn_cell='gru', variable_lengths=False):
+                 bidirectional=False, rnn_cell='gru', variable_lengths=False, **kwargs):
         super().__init__(
             vocab_size, max_len, hidden_size, embedding_size, input_dropout_p, dropout_p, n_layers, bidirectional,
             rnn_cell, variable_lengths
@@ -79,23 +80,79 @@ class AnticipatingEncoderRNN(EncoderRNN):
         return output, hidden, encoder_predictions
 
 
-class AnticipatingEmbeddingEncoderRNN(AnticipatingEncoderRNN):
+class HierarchicalEncoderRNN:
     """
-    Special kind of encoder which tries to also predict the next token of the sequence, but using the index of the
-    predicted word to look up an embedding an impose the loss as the distance between the predicted embedding an the
-    actual next embedding.
+    Special kind of encoder which tries to implement the Chunk-and-Pass processing hypothesized by
+    Christiansen & Chater (2016) for human language processing within the Now-or-Never bottleneck framework.
+
+    First, a RNN is used to create the hidden states based on input tokens and previous hidden states.
+    Then, a convolutional filter is used to create "chunks" which are then used to create another set of hidden
+    representations.
     """
+    def __init__(self, vocab_size, max_len, hidden_size, embedding_size, input_dropout_p=0, dropout_p=0, n_layers=1,
+                 filter_size=2, bidirectional=False, rnn_cell='gru', variable_lengths=False, hierarchical_layers=2, **kwargs):
+
+        assert hierarchical_layers > 1, "n_layers must be bigger than one, otherwise this model is just a normal encoder."
+
+        self.encoding_layers = [
+            EncoderRNN(vocab_size, max_len, hidden_size, embedding_size, input_dropout_p, dropout_p, 1,
+                       bidirectional, rnn_cell, variable_lengths)
+            for _ in range(hierarchical_layers)
+        ]
+        self.filter_size = filter_size
+        self.variable_lengths = variable_lengths
+        self.filters = [
+            nn.Conv2d(in_channels=1, out_channels=1, kernel_size=(filter_size, 1))
+            for _ in range(hierarchical_layers - 1)  # Only necessary between layers
+        ]
+
+    def __call__(self, input_var, input_lengths=None):
+        return self.forward(input_var, input_lengths)
+
     def forward(self, input_var, input_lengths=None):
-        # Get output of AnticipatingEncoderRNN
-        output, hidden, encoder_prediction_dists = super().forward(input_var, input_lengths)
+        # Perform forward pass for bottom-most layer using input embeddings
+        output, hidden = self.encoding_layers[0].forward(input_var, input_lengths)
 
-        # Get indices of predicted words
-        encoder_predicted_indices = [predictive_dist.argmax(dim=1) for predictive_dist in encoder_prediction_dists]
+        # For all other layers: Perform convolutions on hidden representations, then feed through next layer
+        for encoding_layer, kernel in zip(self.encoding_layers[1:], self.filters):
+            hidden_input = torch.cat(hidden, dim=0)
+            num_hidden, batch_size, dim = hidden_input.size()
+            hidden_input = hidden_input.view(batch_size, 1, num_hidden, dim)
 
-        # Look up embeddings
-        encoder_predicted_embeddings = [self.embedding(indices) for indices in encoder_predicted_indices]
+            if num_hidden < self.filter_size:
+                break  # If there aren't enough elements to perform convolution
 
-        return output, hidden, encoder_predicted_embeddings
+            feature_maps = kernel(hidden_input)
+            feature_maps = F.relu(feature_maps)
+            feature_maps = feature_maps.squeeze(1)
+
+            # Adjust size of convoluted sequences to avoid processing padding tokens
+            input_lengths = [length - self.filter_size + 1 for length in input_lengths]
+
+            if 0 in input_lengths:
+                break
+
+            output, hidden = self.encoding_layer_forward(encoding_layer, feature_maps, input_lengths)
+
+        return output, hidden, None  # No predictions are being made here
+
+    def encoding_layer_forward(self, encoding_layer, input_var, input_lengths=None):
+        """
+        Perform a complete forward pass with an encoder layer and arbitrary input (embeddings for the bottom-most layer
+        or convoluted hidden states from the previous layer).
+        """
+        input_var = encoding_layer.input_dropout(input_var)
+        if self.variable_lengths:
+            input_var = nn.utils.rnn.pack_padded_sequence(
+                input_var, input_lengths, batch_first=True)
+
+        output, hidden = encoding_layer.rnn(input_var)
+
+        if self.variable_lengths:
+            output, _ = nn.utils.rnn.pad_packed_sequence(
+                output, batch_first=True)
+
+        return output, hidden
 
 
 class BottleneckDecoderRNN(DecoderRNN):

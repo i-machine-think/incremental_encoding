@@ -10,8 +10,8 @@ from machine.models import EncoderRNN, DecoderRNN, Seq2seq
 from train_model import init_argparser, validate_options, init_logging, prepare_dataset, prepare_losses_and_metrics, \
     load_model_from_checkpoint
 
-from incremental_models import AnticipatingEncoderRNN, IncrementalSeq2Seq, AnticipatingEmbeddingEncoderRNN
-from incremental_loss import AnticipationLoss, AnticipationEmbeddingLoss
+from incremental_models import AnticipatingEncoderRNN, IncrementalSeq2Seq, HierarchicalEncoderRNN, EncoderRNNWrapper
+from incremental_loss import AnticipationLoss
 from custom_trainer import SupervisedPreTrainer
 
 # GLOBALS
@@ -71,21 +71,23 @@ def train_incremental_model():
 def add_incremental_parser_args(parser):
     parser.add_argument('--scale_anticipation_loss', type=float, default=1.0,
                         help="Scale the anticipation loss with some factor,")
-    parser.add_argument('--anticipation_loss', choices=["normal", "embeddings"],
+    parser.add_argument('--incremental_type', choices=["anticipation_loss", "hierarchical_encoder"],
                         help='Indicate whether an additional loss term should be imposed on the encoder.')
     parser.add_argument('--anticipation_pretraining', type=int, default=0,
                         help="Pre-train the model using only the anticipation loss for a custom number of epochs.")
     parser.add_argument('--anticipation_only', action='store_true',
                         help='Only train with anticipation loss.')
+    parser.add_argument('--hierarchical_layers', type=int,
+                        help="Number of layers for the hierarchical encoder")
     return parser
 
 
 def validate_incremental_parser_args(parser, opt):
-    if opt.scale_anticipation_loss != 1.0 and not opt.anticipation_loss:
-        parser.error("Must specify a type of anticipation loss in order to scale it.")
+    if opt.scale_anticipation_loss != 1.0 and not opt.incremental_type == "anticipation_loss":
+        parser.error("Must use anticipation loss in order to scale it.")
 
-    if opt.anticipation_pretraining and not opt.anticipation_loss:
-        parser.error("Must specify a type of anticipation loss in order to use it for pre-training.")
+    if opt.anticipation_pretraining and not opt.incremental_type == "anticipation_loss":
+        parser.error("Must use anticipation loss in order to use it for pre-training.")
 
     return opt
 
@@ -103,19 +105,19 @@ def initialize_incremental_model(opt, src, tgt, train):
     # Pick special classes for encoder / decoder if anticipation loss is used
     # -> they require different information to calculate the loss
     encoder_classes = {
-        None: EncoderRNN,
-        "normal": AnticipatingEncoderRNN,
-        "embeddings": AnticipatingEmbeddingEncoderRNN
+        None: EncoderRNNWrapper,
+        "anticipation_loss": AnticipatingEncoderRNN,
+        "hierarchical_encoder": HierarchicalEncoderRNN
     }
     # Set up for future changes
     decoder_classes = {
         None: DecoderRNN,
-        "normal": DecoderRNN,
-        "embeddings": DecoderRNN
+        "anticipation_loss": DecoderRNN,
+        "hierarchical_encoder": DecoderRNN,
     }
 
-    encoder_cls = encoder_classes[opt.anticipation_loss]
-    decoder_cls = decoder_classes[opt.anticipation_loss]
+    encoder_cls = encoder_classes[opt.incremental_type]
+    decoder_cls = decoder_classes[opt.incremental_type]
 
     encoder = encoder_cls(len(src.vocab), opt.max_len, hidden_size,
                          opt.embedding_size,
@@ -123,7 +125,8 @@ def initialize_incremental_model(opt, src, tgt, train):
                          n_layers=opt.n_layers,
                          bidirectional=opt.bidirectional,
                          rnn_cell=opt.rnn_cell,
-                         variable_lengths=True)
+                         variable_lengths=True,
+                         hierarchical_layers=opt.hierarchical_layers)
     decoder = decoder_cls(len(tgt.vocab), opt.max_len, decoder_hidden_size,
                          dropout_p=opt.dropout_p_decoder,
                          n_layers=opt.n_layers,
@@ -133,10 +136,10 @@ def initialize_incremental_model(opt, src, tgt, train):
                          rnn_cell=opt.rnn_cell,
                          eos_id=tgt.eos_id, sos_id=tgt.sos_id)
 
-    if opt.anticipation_loss is None:
+    if opt.incremental_type is None:
         seq2seq = Seq2seq(encoder, decoder)
     else:
-        seq2seq = IncrementalSeq2Seq(encoder, decoder, use_embeddings=(opt.anticipation_loss == "embeddings"))
+        seq2seq = IncrementalSeq2Seq(encoder, decoder, use_embeddings=False)
 
     seq2seq.to(device)
 
@@ -147,15 +150,8 @@ def add_incremental_losses(opt, losses, loss_weights):
     incremental_losses = []
 
     # Use cross-entropy loss to compare the output distribution against the actual next word in the sequence
-    if opt.anticipation_loss == "normal":
+    if opt.incremental_type == "anticipation_loss":
         anticipation_loss = AnticipationLoss(ignore_index=IGNORE_INDEX)
-        incremental_losses.append(anticipation_loss)
-        loss_weights.append(opt.scale_anticipation_loss)
-
-    # Use euclidian distance to measure the difference between the embedding of the most likely predicted word
-    # to the embedding of the actual next word in the sequence
-    elif opt.anticipation_loss == "embeddings":
-        anticipation_loss = AnticipationEmbeddingLoss()
         incremental_losses.append(anticipation_loss)
         loss_weights.append(opt.scale_anticipation_loss)
 
