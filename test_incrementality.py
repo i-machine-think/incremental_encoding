@@ -82,11 +82,11 @@ def main():
     for metric in baseline_measurements.keys():
         baseline_results, incremental_results = np.array(baseline_measurements[metric]), np.array(incremental_measurements[metric])
         baseline_avg, baseline_std = baseline_results.mean(), baseline_results.std()
-        incremental_avg, incremental_std = incremental_results.mean(), baseline_results.std()
+        incremental_avg, incremental_std = incremental_results.mean(), incremental_results.std()
         _, p_value = ttest_ind(baseline_results, incremental_results)
 
         print(
-            f"{metric:<10}: Baseline {baseline_avg:.4f} ±{baseline_std:.2f} | Incremental {incremental_avg:.4f} "
+            f"{metric:<10}: Baseline {baseline_avg:.4f} ±{baseline_std:.3f} | Incremental {incremental_avg:.4f} "
             f"±{incremental_std:.3f} | p={p_value:.4f}"
         )
 
