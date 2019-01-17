@@ -40,7 +40,7 @@ class AverageIntegrationRatio(Metric):
 
     For any hidden state h_t and input embedding x_t, the ratio is computed by
 
-    min(||h_t - x_t|| / ||h_t - h_t-1||, ||h_t - x_t|| / ||h_t - h_t-1||)
+    min(||h_t - x_t|| / ||h_t - h_t-1||, ||h_t - h_t-1|| / ||h_t - x_t||)
 
     which is then averaged over T-1 time steps. To apply this measure, the dimensionality
     has to be the same for hidden states and word embeddings alike.
