@@ -5,6 +5,7 @@ Test the incrementality of a model by computing different scores.
 # STD
 import argparse
 from collections import defaultdict
+from typing import Callable
 
 # EXT
 from machine.util.checkpoint import Checkpoint
@@ -18,7 +19,7 @@ from scipy.stats import ttest_ind
 
 # PROJECT
 from incremental_metrics import AverageIntegrationRatio, DiagnosticClassifierAccuracy, \
-    WeighedDiagnosticClassifierAccuracy, RepresentationalSimilarity, SequenceAccuracyWrapper
+    WeighedDiagnosticClassifierAccuracy, RepresentationalSimilarity, SequenceAccuracyWrapper, WordAccuracyWrapper
 
 # GLOBALS
 from incremental_models import IncrementalSeq2Seq
@@ -29,14 +30,29 @@ METRICS = {
     "dc_accuracy": DiagnosticClassifierAccuracy,
     "wdc_accuracy": WeighedDiagnosticClassifierAccuracy,
     "repr_sim": RepresentationalSimilarity,
-    "seq_acc": SequenceAccuracyWrapper
+    "seq_acc": SequenceAccuracyWrapper,
+    "word_acc": WordAccuracyWrapper
 }
 
 # CONSTANTS
 TOP_N = 3
 
 
-def main():
+def is_incremental(model):
+    """
+    Test whether a model is of an incremental model class.
+    """
+    return isinstance(model, IncrementalSeq2Seq)
+
+
+def has_attention(model):
+    """
+    Test whether a model uses attention.
+    """
+    return model.decoder_module.attention_method is not None
+
+
+def test_incrementality(distinction_func: Callable=is_incremental, model_names: tuple=None):
     parser = init_argparser()
 
     opt = parser.parse_args()
@@ -58,8 +74,8 @@ def main():
     metrics = [METRICS[metric](max_len=opt.max_len, pad=pad, n=TOP_N) for metric in opt.metrics]
 
     # Evaluate models on test set
-    baseline_measurements = defaultdict(list)
-    incremental_measurements = defaultdict(list)
+    first_measurements = defaultdict(list)
+    second_measurements = defaultdict(list)
 
     for model in models:
         evaluator = IncrementalEvaluator(metrics=metrics, batch_size=opt.batch_size)
@@ -72,22 +88,23 @@ def main():
         print("")
 
         for metric in metrics:
-            if is_incremental(model):
-                incremental_measurements[metric._SHORTNAME].append(metric.get_val())
+            if distinction_func(model):
+                second_measurements[metric._SHORTNAME].append(metric.get_val())
             else:
-                baseline_measurements[metric._SHORTNAME].append(metric.get_val())
+                first_measurements[metric._SHORTNAME].append(metric.get_val())
 
     # Evaluate all the models together and generate final report
     print("\nResults per metric")
-    for metric in baseline_measurements.keys():
-        baseline_results, incremental_results = np.array(baseline_measurements[metric]), np.array(incremental_measurements[metric])
-        baseline_avg, baseline_std = baseline_results.mean(), baseline_results.std()
-        incremental_avg, incremental_std = incremental_results.mean(), incremental_results.std()
-        _, p_value = ttest_ind(baseline_results, incremental_results)
+    for metric in first_measurements.keys():
+        first_results, second_results = np.array(first_measurements[metric]), np.array(second_measurements[metric])
+        first_avg, first_std = first_results.mean(), first_results.std()
+        second_avg, second_std = second_results.mean(), second_results.std()
+        _, p_value = ttest_ind(first_results, second_results)
+        first_name, second_name = ("Baseline", "Incremental") if model_names is None else model_names
 
         print(
-            f"{metric:<10}: Baseline {baseline_avg:.4f} ±{baseline_std:.3f} | Incremental {incremental_avg:.4f} "
-            f"±{incremental_std:.3f} | p={p_value:.4f}"
+            f"{metric:<10}: {first_name} {first_avg:.4f} ±{first_std:.3f} | {second_name} {second_avg:.4f} "
+            f"±{second_std:.3f} | p={p_value:.4f}"
         )
 
 
@@ -204,20 +221,13 @@ def load_models_from_paths(paths: list, src, tgt):
     return models, input_vocab, output_vocab
 
 
-def is_incremental(model):
-    """
-    Test whether a model is of an incremental model class.
-    """
-    return isinstance(model, IncrementalSeq2Seq)
-
-
 def init_argparser():
     parser = argparse.ArgumentParser()
 
     # Model arguments
     parser.add_argument('--test', help='Testing data')
     parser.add_argument('--metrics', nargs='+', default=['seq_acc'],
-                        choices=["integration_ratio", "dc_accuracy", "wdc_accuracy", "repr_sim", "seq_acc"],
+                        choices=["integration_ratio", "dc_accuracy", "wdc_accuracy", "repr_sim", "seq_acc", "word_acc"],
                         help='Metrics to use')
     parser.add_argument('--batch_size', type=int,
                         help='Batch size', default=1)
@@ -232,4 +242,4 @@ def init_argparser():
 
 
 if __name__ == "__main__":
-    main()
+    test_incrementality(distinction_func=has_attention, model_names=("Baseline", "Attention"))

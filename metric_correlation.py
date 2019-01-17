@@ -5,6 +5,7 @@ Check whether incrementality metrics defined in incremental_metrics.py are corre
 # STD
 from itertools import combinations
 from collections import defaultdict
+from typing import Callable
 
 # EXT
 from machine.trainer import SupervisedTrainer
@@ -13,7 +14,7 @@ import matplotlib.pyplot as plt
 
 # PROJECT
 from test_incrementality import init_argparser, load_test_data, IncrementalEvaluator, METRICS, TOP_N, \
-    load_models_from_paths, is_incremental
+    load_models_from_paths, is_incremental, has_attention
 
 # CONST
 BASELINE_COLOR = "tab:blue"
@@ -41,7 +42,8 @@ def test_metric_correlation(measurements: dict):
     return correlations, scores
 
 
-def create_metric_scatter_plot(measurements: dict, image_dir: str, correlations: dict=None):
+def create_metric_scatter_plot(measurements: dict, image_dir: str, correlations: dict=None,
+                               distinction_func: Callable=is_incremental, labels: tuple=None, colors: tuple=None):
     """
     Create scatter plots showing where models fall with respect to two different metrics.
     """
@@ -50,20 +52,22 @@ def create_metric_scatter_plot(measurements: dict, image_dir: str, correlations:
     for metric_a, metric_b in combinations(metrics, 2):
         # Select two metrics to use as scatter plot axes
         # Now get the model measurements
-        baseline_x, baseline_y = [], []
-        incremental_x, incremental_y = [], []
+        first_x, first_y = [], []
+        second_x, second_y = [], []
 
         for model, scores in measurements.items():
-            if is_incremental(model):
-                incremental_x.append(scores[metric_a])
-                incremental_y.append(scores[metric_b])
+            if distinction_func(model):
+                second_x.append(scores[metric_a])
+                second_y.append(scores[metric_b])
             else:
-                baseline_x.append(scores[metric_a])
-                baseline_y.append(scores[metric_b])
+                first_x.append(scores[metric_a])
+                first_y.append(scores[metric_b])
 
         # Plot
-        plt.scatter(baseline_x, baseline_y, c=BASELINE_COLOR, marker="x", label="Baseline")
-        plt.scatter(incremental_x, incremental_y, c=INCREMENTAL_COLOR, marker="o", label="Incremental")
+        first_label, second_label = ("Baseline", "Incremental") if labels is None else labels
+        first_color, second_color = (BASELINE_COLOR, INCREMENTAL_COLOR) if colors is None else colors
+        plt.scatter(first_x, first_y, c=first_color, marker="x", label=first_label)
+        plt.scatter(second_x, second_y, c=second_color, marker="o", label=second_label)
         plt.xlabel(metric_a)
         plt.ylabel(metric_b)
         ax = plt.gca()
@@ -100,6 +104,8 @@ def generate_measurements(models: list, metrics: list):
 if __name__ == "__main__":
     parser = init_argparser()
     parser.add_argument("--img_path", help="Path to directory in which to save generated plots.")
+    parser.add_argument("--labels", type=str, nargs="+", help="Labels for model in plots.")
+    parser.add_argument("--colors", type=str, nargs="+", help="Colors for model in plots.")
     opt = parser.parse_args()
 
     # Prepare data set
@@ -113,6 +119,9 @@ if __name__ == "__main__":
     # Perform analyses
     measurements = generate_measurements(models, metrics)
     correlations, _ = test_metric_correlation(measurements)
-    create_metric_scatter_plot(measurements, opt.img_path, correlations)
+    create_metric_scatter_plot(
+        measurements, opt.img_path, correlations, distinction_func=has_attention, labels=tuple(opt.labels),
+        colors=tuple(opt.colors)
+    )
 
 
