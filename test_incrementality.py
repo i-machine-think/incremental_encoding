@@ -169,6 +169,7 @@ class IncrementalEvaluator(Evaluator):
                 other["encoder_hidden"] = encoder_results[0]
                 other["encoder_embeddings"] = model.encoder_module.embedding(input_variable)
                 other["decoder_output"] = target_variable["decoder_output"]  # Store everything used for eval in other
+                other["encoder"] = model.encoder_module.rnn
 
                 # Compute metric(s) over one batch
                 metrics = self.update_batch_metrics(metrics, other, target_variable)

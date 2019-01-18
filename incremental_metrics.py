@@ -65,6 +65,7 @@ class AverageIntegrationRatio(Metric):
         batch_size, timesteps, hidden_dim = hidden.size()
         embedding_dim = embeddings.size(2)
         ratios = torch.zeros(batch_size, timesteps - 1)
+        encoder_cell = targets["encoder"]
 
         # Check if dimensionality corresponds for embeddings and hidden states
         assert embedding_dim == hidden_dim, "This metric only works if input embeddings and hidden states are of the" \
@@ -74,8 +75,17 @@ class AverageIntegrationRatio(Metric):
         for t in range(1, timesteps):
             h_t, h_previous, x_t = hidden[:, t], hidden[:, t - 1], embeddings[:, t]
 
-            delta_x = F.pairwise_distance(h_t, x_t, p=2, keepdim=True)
-            delta_h = F.pairwise_distance(h_t, h_previous, p=2, keepdim=True)
+            # Do two forward passes: One where the input is ignored and one where the history is ignored
+            empty_x = torch.zeros(*x_t.size()).unsqueeze(1)
+            compare_x, _ = encoder_cell.forward(x_t.unsqueeze(1))  # If all history was erased
+            hx = h_previous.unsqueeze(0)
+            _, (compare_h, _) = encoder_cell.forward(empty_x, (hx, hx))  # If input was ignored
+
+            # Compare
+            compare_x = compare_x.squeeze(1)
+            compare_h = compare_h.squeeze(0)
+            delta_x = F.pairwise_distance(h_t, compare_x, p=2, keepdim=True)
+            delta_h = F.pairwise_distance(h_t, compare_h, p=2, keepdim=True)
 
             compared = torch.cat((delta_x / delta_h, delta_h / delta_x), dim=1)
             minimum_score, _ = torch.min(compared, dim=1)
@@ -276,7 +286,7 @@ class DiagnosticClassifierAccuracy(Metric):
                     X_train, y_train, X_test, y_test, class_weights = self.dataset.generate_training_data(
                         t, t_prime, target
                     )
-                    dg = LogisticRegression(class_weight=class_weights)
+                    dg = LogisticRegression(class_weight=class_weights, solver="lbfgs", max_iter=200)
                     dg.fit(X_train, y_train)
 
                     # Test the whole shebang
