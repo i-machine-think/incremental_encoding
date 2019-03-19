@@ -40,10 +40,16 @@ class AverageIntegrationRatio(Metric):
 
     For any hidden state h_t and input embedding x_t, the ratio is computed by
 
-    min(||h_t - x_t|| / ||h_t - h_t-1||, ||h_t - h_t-1|| / ||h_t - x_t||)
+    alpha * || h_t - LSTM(x_t, 0) ||^2 / || h_t - LSTM(0, h_t-1) ||^2
 
-    which is then averaged over T-1 time steps. To apply this measure, the dimensionality
-    has to be the same for hidden states and word embeddings alike.
+    where ||...||^2 denotes the l2-norm and where the value is then averaged over T-1 time steps. alpha is a correction
+    terms that linearly depend on the current time step t and corrects for the position of the current token inside the
+    sequence, as e.g. integrating information is preferable over maintaining a history in the beginning of a sentence.
+    To apply this metric, the dimensionality has to be the same for hidden states and word embeddings alike.
+
+    A value < 1 implies that the model forget more of the history of the sequence in favour of integrating new
+    information based on the current token x_t, a value > 1 indicates the opposite, where keeping more information
+    about previous tokens is favored over integrating the information of the current symbol.
     """
     _NAME = "Integration ratio"
     _SHORTNAME = "intratio"
@@ -62,9 +68,9 @@ class AverageIntegrationRatio(Metric):
     def eval_batch(self, outputs, targets):
         hidden = targets["encoder_hidden"]  # Input embeddings
         embeddings = targets["encoder_embeddings"]  # Hidden states
-        batch_size, timesteps, hidden_dim = hidden.size()
+        batch_size, time_steps, hidden_dim = hidden.size()
         embedding_dim = embeddings.size(2)
-        ratios = torch.zeros(batch_size, timesteps - 1)
+        ratios = torch.zeros(batch_size, time_steps - 1)
         encoder_cell = targets["encoder"]
 
         # Check if dimensionality corresponds for embeddings and hidden states
@@ -72,7 +78,7 @@ class AverageIntegrationRatio(Metric):
                                             "same dimensionality"
 
         # Calculate ratios
-        for t in range(1, timesteps):
+        for t in range(1, time_steps):
             h_t, h_previous, x_t = hidden[:, t], hidden[:, t - 1], embeddings[:, t]
 
             # Do two forward passes: One where the input is ignored and one where the history is ignored
@@ -87,11 +93,22 @@ class AverageIntegrationRatio(Metric):
             delta_x = F.pairwise_distance(h_t, compare_x, p=2, keepdim=True)
             delta_h = F.pairwise_distance(h_t, compare_h, p=2, keepdim=True)
 
-            compared = torch.cat((delta_x / delta_h, delta_h / delta_x), dim=1)
-            minimum_score, _ = torch.min(compared, dim=1)
-            ratios[:, t - 1] = minimum_score
+            # Correct for position in sequence
+            # In the beginning of a sequence, delta_h will naturally be high because there isn't much of history.
+            # Conversely, in the end of a sequence, less information from the current token will be integrated because
+            # a representation of the whole sentence has to be maintained. Therefore correct delta_h and delta_x
+            # accordingly
+            correction_term = (time_steps - t) / t
 
-        self.batch_ratio = ratios.view(batch_size * (timesteps - 1)).sum() / (batch_size * timesteps)
+            # Calculate ratio
+            integration_ratio = correction_term * delta_x / delta_h
+            integration_ratio = integration_ratio.squeeze(1)
+            ratios[:, t - 1] = integration_ratio
+
+        # Incorporate norm term for correction factor to center ratio around 1 again
+        correction_norm = sum([(time_steps - t) / t for t in range(1, time_steps)])
+
+        self.batch_ratio = ratios.view(batch_size * (time_steps - 1)).sum() / (batch_size * correction_norm)
 
 
 class ActivationsDataset:
