@@ -359,24 +359,27 @@ class WeighedDiagnosticClassifierAccuracy(DiagnosticClassifierAccuracy):
 
 class RepresentationalSimilarity(Metric):
     """
-    A metric expressing the similarity between hidden states concerning the same (sub-)sequence during processing.
+    A metric expressing the similarity between hidden states after processing the same sequence of tokens.
     We would expect the hidden states to be more similar for an incremental model after processing the same sequence
     after an arbitrary prefix of token than for the baseline model. E.g. consider the sequences
 
-          t1 t2 t3
-          --------
-    seq1  XX T1 T2
-    seq2  XX T1 T2
+             t1 t2 t3 t4
+             -----------
+    sequence XX T1 T2 XX
 
     where T1 and T2 are specific tokens and XX denotes an arbitrary token. Here we would expect the representations for
-    sequence 1 and sequence 2 to be more similar after encoding t3 for a model with incremental capabilities than for a
-    regular model that might only care about encoding one token at a time. We can quantify this difference by
-    calculating the average euclidean distance over all hidden representations encoded at t1. In this specific case,
-    we call the metric of being of second order, as a history of two tokens is considered. While an arbitrarily long
-    history can be considered, the number of histories matching a length decreases in a corpus.
+    the hidden state at t4 to be more similar for a model with incremental capabilities than for a
+    regular model that might only care about encoding one token at a time. We calculate the similarities after one more
+    arbitrary token has been encoded so that just substituting most of the existing hidden state with an encoding of
+    (in this case) T2 doesn't produce a good score.
 
-    In essence, the final score expresses the average distance between activations produced after processing the same
-    input tokens at the same time step.
+    We can quantify this difference by calculating the average euclidean distance over all hidden representations
+    encoded at t4. In this specific case, we call the metric of being of second order, as a history of two tokens is
+    considered. While an arbitrarily long history can be considered, the number of histories matching a length
+    decreases in a corpus.
+
+    In essence, the final score expresses the average distance between activations after previously processing the same
+    sequence of tokens.
     """
     _NAME = "Representational Similarity"
     _SHORTNAME = "repsim"
@@ -419,7 +422,7 @@ class RepresentationalSimilarity(Metric):
         global_cumulative_distances = 0
 
         # Calculate average distances
-        for t in range(T - self.order):
+        for t in range(T - self.order - 1):
             for target_activations in selected_activations_t[t]:
                 # Activations for target histories at time step t that are found in data set.
                 average_distance = self.calculate_average_distance(target_activations)
@@ -436,13 +439,15 @@ class RepresentationalSimilarity(Metric):
         # _t is used as shorthand here for "per_timestep"
 
         # Collect all histories of length order
-        histories_t = [self.dataset.sentence_tokens[:, t - self.order:t] for t in range(self.order, T)]
+        histories_t = [self.dataset.sentence_tokens[:, t - self.order:t] for t in range(self.order, T - 1)]
 
         # Select the most common histories ending at each time step
         selected_histories_t = self._select_histories_by_freq(histories_t)
 
-        # Get the activations corresponding to all the histories at time step t
-        activations_t = [self.dataset.sentence_activations[:, t - self.order:t, :] for t in range(self.order, T)]
+        # Get the activations corresponding to all the histories at time step t, shifted to the right by one
+        activations_t = [
+            self.dataset.sentence_activations[:, t - self.order + 1:t + 1, :] for t in range(self.order, T - 1)
+        ]
         # Get indices of selected histories
         selected_indices_t = [
             [

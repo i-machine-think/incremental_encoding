@@ -26,9 +26,9 @@ from incremental_models import IncrementalSeq2Seq
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 METRICS = {
-    "integration_ratio": AverageIntegrationRatio,
-    "dc_accuracy": DiagnosticClassifierAccuracy,
-    "wdc_accuracy": WeighedDiagnosticClassifierAccuracy,
+    "int_ratio": AverageIntegrationRatio,
+    "dc_acc": DiagnosticClassifierAccuracy,
+    "wdc_acc": WeighedDiagnosticClassifierAccuracy,
     "repr_sim": RepresentationalSimilarity,
     "seq_acc": SequenceAccuracyWrapper,
     "word_acc": WordAccuracyWrapper
@@ -228,7 +228,7 @@ def init_argparser():
     # Model arguments
     parser.add_argument('--test', help='Testing data')
     parser.add_argument('--metrics', nargs='+', default=['seq_acc'],
-                        choices=["integration_ratio", "dc_accuracy", "wdc_accuracy", "repr_sim", "seq_acc", "word_acc"],
+                        choices=["int_ratio", "dc_acc", "wdc_acc", "repr_sim", "seq_acc", "word_acc"],
                         help='Metrics to use')
     parser.add_argument('--batch_size', type=int,
                         help='Batch size', default=1)
