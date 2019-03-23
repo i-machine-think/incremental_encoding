@@ -55,7 +55,7 @@ class AnticipatingEncoderRNN(EncoderRNN):
     def __init__(self, vocab_size, max_len, hidden_size, embedding_size, input_dropout_p=0, dropout_p=0, n_layers=1,
                  bidirectional=False, rnn_cell='gru', variable_lengths=False):
         super().__init__(
-            vocab_size, max_len, hidden_size, embedding_size, input_dropout_p, dropout_p, n_layers,bidirectional,
+            vocab_size, max_len, hidden_size, embedding_size, input_dropout_p, dropout_p, n_layers, bidirectional,
             rnn_cell, variable_lengths
         )
         self.prediction_layer = nn.Linear(hidden_size, vocab_size)  # Layer to predict next token in input sequence

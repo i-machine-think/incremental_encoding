@@ -5,12 +5,12 @@ import logging
 import torch
 import torchtext
 
-from incremental_loss import Perplexity
-from seq2seq.dataset import SourceField, TargetField
-from seq2seq.evaluator import Evaluator
-from seq2seq.util.checkpoint import Checkpoint
-from seq2seq.trainer import SupervisedTrainer
-from seq2seq.metrics import WordAccuracy, SequenceAccuracy
+from incremental_loss import NLLLoss
+from machine.dataset import SourceField, TargetField
+from machine.evaluator import Evaluator
+from machine.util.checkpoint import Checkpoint
+from machine.trainer import SupervisedTrainer
+from machine.metrics import WordAccuracy, SequenceAccuracy
 
 try:
     raw_input          # Python 2
@@ -61,7 +61,7 @@ test = torchtext.data.TabularDataset(
 # Prepare loss
 weight = torch.ones(len(output_vocab))
 pad = output_vocab.stoi[tgt.pad_token]
-loss = Perplexity(pad)
+loss = NLLLoss(pad)
 metrics = [WordAccuracy(pad), SequenceAccuracy(pad)]
 if torch.cuda.is_available():
     loss.cuda()
