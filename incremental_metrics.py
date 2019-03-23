@@ -5,7 +5,7 @@ Implementing metrics in order to measure the degree to which a model processes i
 # STD
 import random
 import math
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 # EXT
 from machine.metrics.metrics import Metric, SequenceAccuracy, WordAccuracy
@@ -359,32 +359,35 @@ class WeighedDiagnosticClassifierAccuracy(DiagnosticClassifierAccuracy):
 
 class RepresentationalSimilarity(Metric):
     """
-    A metric expressing the similarity between hidden states concerning the same token during processing.
-    We would expect the hidden states to be more similar for an incremental model after processing the same token after
-    an arbitrary prefix than for the baseline model. E.g. consider the sequences
+    A metric expressing the similarity between hidden states concerning the same (sub-)sequence during processing.
+    We would expect the hidden states to be more similar for an incremental model after processing the same sequence
+    after an arbitrary prefix of token than for the baseline model. E.g. consider the sequences
 
-    t1 t2 t3
-    --------
-    XX T1 XX
-    XX XX XX
+          t1 t2 t3
+          --------
+    seq1  XX T1 T2
+    seq2  XX T1 T2
 
-    where T1 is a specific token and XX are arbitrary tokens. Here we would expect the representations for sequence 1
-    to be more similar after encoding t3 for a model with incremental capabilities.
-    We can quantify this difference by calculating the average euclidean distance over all hidden representations
-    encoded at t1.
+    where T1 and T2 are specific tokens and XX denotes an arbitrary token. Here we would expect the representations for
+    sequence 1 and sequence 2 to be more similar after encoding t3 for a model with incremental capabilities than for a
+    regular model that might only care about encoding one token at a time. We can quantify this difference by
+    calculating the average euclidean distance over all hidden representations encoded at t1. In this specific case,
+    we call the metric of being of second order, as a history of two tokens is considered. While an arbitrarily long
+    history can be considered, the number of histories matching a length decreases in a corpus.
 
-    In essence, the final score expresses the distance between activations produced after processing the same input
-    token at the same time step, averaged over all target tokens selected over all time steps in the data set (selected
-    tokens depend on the selection function, default is all n most frequent tokens at that time step).
+    In essence, the final score expresses the average distance between activations produced after processing the same
+    input tokens at the same time step.
     """
     _NAME = "Representational Similarity"
     _SHORTNAME = "repsim"
     _INPUT = "seqlist"
 
-    def __init__(self, max_len, pad, selection_func=None, **selection_kwargs):
+    def __init__(self, max_len, pad, selection_func=None, order=3, n=5, **selection_kwargs):
         super().__init__(self._NAME, self._SHORTNAME, self._INPUT)
         self.max_len = max_len
         self.pad = pad
+        self.order = order
+        self.n = n
         self.selection_func = selection_func
         self.selection_kwargs = selection_kwargs
         self.dataset = ActivationsDataset(max_len, pad)
@@ -410,22 +413,81 @@ class RepresentationalSimilarity(Metric):
         self.average_distances = [defaultdict(float) for _ in range(self.max_len)]
 
     def calculate_similarities(self):
-        # Generate target tokens calculate similarities for
-        targets_per_timestep = self.dataset.select_targets(self.selection_func)
+        selected_activations_t = self.get_activations_for_history()
         T = self.dataset.max_found_len
-        global_norm = sum([len(targets) for targets in targets_per_timestep])
+        global_norm = sum([len(targets) for targets in selected_activations_t])
         global_cumulative_distances = 0
 
         # Calculate average distances
-        for t in range(T):
-            for target in targets_per_timestep[t]:
-                # Activations for target tokens at time step t that are found in data set.
-                target_activations = self.dataset.get_target_activations_at_timestep(t, target)
+        for t in range(T - self.order):
+            for target_activations in selected_activations_t[t]:
+                # Activations for target histories at time step t that are found in data set.
                 average_distance = self.calculate_average_distance(target_activations)
-                self.average_distances[t][target] = average_distance
                 global_cumulative_distances += average_distance
 
         self.representational_sim = global_cumulative_distances / global_norm
+
+    def get_activations_for_history(self):
+        """
+        Select all activations corresponding to histories of a specified order.
+        """
+        T = self.dataset.max_found_len
+
+        # _t is used as shorthand here for "per_timestep"
+
+        # Collect all histories of length order
+        histories_t = [self.dataset.sentence_tokens[:, t - self.order:t] for t in range(self.order, T)]
+
+        # Select the most common histories ending at each time step
+        selected_histories_t = self._select_histories_by_freq(histories_t)
+
+        # Get the activations corresponding to all the histories at time step t
+        activations_t = [self.dataset.sentence_activations[:, t - self.order:t, :] for t in range(self.order, T)]
+        # Get indices of selected histories
+        selected_indices_t = [
+            [
+                histories == selected_history
+                for selected_history in selected_histories
+            ]
+            for histories, selected_histories in zip(histories_t, selected_histories_t)
+        ]
+
+        # Because we are only interested in the last activations, ignore all other ones
+        for selected_indices in selected_indices_t:
+            for top_n in range(self.n):
+                mask = np.zeros((selected_indices[top_n].shape[0], self.order - 1), dtype=bool)
+                selected_indices[top_n][:, :-1] = mask
+
+        # Now apply the indices to get the activations corresponding to each of the selected histories
+        selected_activations_t = [
+            [
+                activations[selected_indices_n]
+                for selected_indices_n in selected_indices  # Selected indices for each of the n most common histories
+            ]
+            for activations, selected_indices in zip(activations_t, selected_indices_t)
+        ]
+
+        return selected_activations_t
+
+    def _select_histories_by_freq(self, histories_t):
+        """
+        Select histories by frequency (ignoring the padding token).
+        """
+        filtered_histories_t = [
+            [history for history in histories if self.pad not in history]  # Don't count padding tokens
+            for histories in histories_t
+        ]
+        history_freqs_t = [Counter() for _ in filtered_histories_t]
+
+        for counter, histories in zip(history_freqs_t, filtered_histories_t):
+            for history in histories:
+                history = tuple(history)  # Make history hashable
+                counter[history] += 1
+
+        # Convert back to numpy array
+        selected_histories_t = [np.array(list(zip(*counter.most_common(self.n)))[0]) for counter in history_freqs_t]
+
+        return selected_histories_t
 
     @staticmethod
     def calculate_average_distance(activations):
