@@ -5,7 +5,7 @@ Check whether incrementality metrics defined in incremental_metrics.py are corre
 # STD
 from itertools import combinations
 from collections import defaultdict
-from typing import Callable
+from typing import Callable, Optional
 
 # EXT
 from machine.trainer import SupervisedTrainer
@@ -43,7 +43,8 @@ def test_metric_correlation(measurements: dict):
 
 
 def create_metric_scatter_plot(measurements: dict, image_dir: str, correlations: dict=None,
-                               distinction_func: Callable=is_incremental, labels: tuple=None, colors: tuple=None):
+                               distinction_func: Callable=is_incremental, marker_func: Callable = lambda model: "o",
+                               labels_func: Optional[Callable] = None, color_func: Optional[Callable] =None):
     """
     Create scatter plots showing where models fall with respect to two different metrics.
     """
@@ -52,24 +53,24 @@ def create_metric_scatter_plot(measurements: dict, image_dir: str, correlations:
     for metric_a, metric_b in combinations(metrics, 2):
         # Select two metrics to use as scatter plot axes
         # Now get the model measurements
-        first_x, first_y = [], []
-        second_x, second_y = [], []
+        xs, ys = defaultdict(list), defaultdict(list)
 
         for model, scores in measurements.items():
-            if distinction_func(model):
-                second_x.append(scores[metric_a])
-                second_y.append(scores[metric_b])
-            else:
-                first_x.append(scores[metric_a])
-                first_y.append(scores[metric_b])
+            xs[distinction_func(model)].append(scores[metric_a])
+            ys[distinction_func(model)].append(scores[metric_b])
 
-        # Plot
-        first_label, second_label = ("Baseline", "Incremental") if labels is None else labels
-        first_color, second_color = (BASELINE_COLOR, INCREMENTAL_COLOR) if colors is None else colors
-        plt.scatter(first_x, first_y, c=first_color, marker="x", label=first_label)
-        plt.scatter(second_x, second_y, c=second_color, marker="o", label=second_label)
+        # Plot points for different models
+        for model_type in xs.keys():
+            marker = marker_func(model_type)
+            color = None if color_func is None else color_func(model_type)
+            label = None if labels_func is None else labels_func(model_type)
+
+            plt.scatter(xs[model_type], ys[model_type], c=color, marker=marker, label=label)
+
         plt.xlabel(metric_a)
         plt.ylabel(metric_b)
+
+        # Plot diagonal that would signify perfect positive (linear) correlation
         ax = plt.gca()
         plt.plot(ax.get_xlim(), ax.get_ylim(), ls="--", c=".3")
         plt.legend()
@@ -104,8 +105,6 @@ def generate_measurements(models: list, metrics: list):
 if __name__ == "__main__":
     parser = init_argparser()
     parser.add_argument("--img_path", help="Path to directory in which to save generated plots.")
-    parser.add_argument("--labels", type=str, nargs="+", help="Labels for model in plots.")
-    parser.add_argument("--colors", type=str, nargs="+", help="Colors for model in plots.")
     opt = parser.parse_args()
 
     # Prepare data set
@@ -119,9 +118,33 @@ if __name__ == "__main__":
     # Perform analyses
     measurements = generate_measurements(models, metrics)
     correlations, _ = test_metric_correlation(measurements)
+
+    # Plot
+    def distinction_function(model):
+        if is_incremental(model):
+            return "Incremental"
+        elif has_attention(model):
+            return "Attention"
+        else:
+            return "Baseline"
+
+    def marker_function(model_name):
+        markers = {
+            "Incremental": "x",
+            "Attention": "o",
+            "Baseline": "D"
+        }
+        return markers[model_name]
+
+    def color_function(model_name):
+        colors = {
+            "Incremental": "tab:red",
+            "Attention": "tab:blue",
+            "Baseline": "tab:green"
+        }
+        return colors[model_name]
+
     create_metric_scatter_plot(
-        measurements, opt.img_path, correlations, distinction_func=has_attention, labels=tuple(opt.labels),
-        colors=tuple(opt.colors)
+        measurements, opt.img_path, correlations, distinction_func=distinction_function,
+        labels_func=lambda model_name: model_name, color_func=color_function, marker_func=marker_function
     )
-
-

@@ -152,7 +152,7 @@ def add_incremental_losses(opt, losses, loss_weights):
         incremental_losses.append(anticipation_loss)
         loss_weights.append(opt.scale_anticipation_loss)
 
-    # Use euclidian distance to measure the difference between the embedding of the most likely predicted word
+    # Use euclidean distance to measure the difference between the embedding of the most likely predicted word
     # to the embedding of the actual next word in the sequence
     elif opt.anticipation_loss == "embeddings":
         anticipation_loss = AnticipationEmbeddingLoss()
