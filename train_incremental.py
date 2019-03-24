@@ -10,7 +10,8 @@ from machine.models import EncoderRNN, DecoderRNN, Seq2seq
 from train_model import init_argparser, validate_options, init_logging, prepare_dataset, prepare_losses_and_metrics, \
     load_model_from_checkpoint
 
-from incremental_models import AnticipatingEncoderRNN, IncrementalSeq2Seq, AnticipatingEmbeddingEncoderRNN
+from incremental_models import \
+    AnticipatingEncoderRNN, IncrementalSeq2Seq, AnticipatingEmbeddingEncoderRNN, BottleneckDecoderRNN
 from incremental_loss import AnticipationLoss, AnticipationEmbeddingLoss
 from custom_trainer import SupervisedPreTrainer
 
@@ -77,6 +78,10 @@ def add_incremental_parser_args(parser):
                         help="Pre-train the model using only the anticipation loss for a custom number of epochs.")
     parser.add_argument('--anticipation_only', action='store_true',
                         help='Only train with anticipation loss.')
+    parser.add_argument('--bottleneck', choices=["window", "past"],
+                        help="Add a bottleneck decoder to the model. Valid choices include 'window' and 'past'.")
+    parser.add_argument('--window_size', type=int,
+                        help="Window size when using the bottleneck decoder with mode 'window'.")
     return parser
 
 
@@ -86,6 +91,9 @@ def validate_incremental_parser_args(parser, opt):
 
     if opt.anticipation_pretraining and not opt.anticipation_loss:
         parser.error("Must specify a type of anticipation loss in order to use it for pre-training.")
+
+    if opt.bottleneck == "window" and opt.window_size is None:
+        parser.error("Window size must be specified when using the bottleneck decoder.")
 
     return opt
 
@@ -110,12 +118,12 @@ def initialize_incremental_model(opt, src, tgt, train):
     # Set up for future changes
     decoder_classes = {
         None: DecoderRNN,
-        "normal": DecoderRNN,
-        "embeddings": DecoderRNN
+        "window": BottleneckDecoderRNN,
+        "past": BottleneckDecoderRNN
     }
 
     encoder_cls = encoder_classes[opt.anticipation_loss]
-    decoder_cls = decoder_classes[opt.anticipation_loss]
+    decoder_cls = decoder_classes[opt.bottleneck]
 
     encoder = encoder_cls(len(src.vocab), opt.max_len, hidden_size,
                          opt.embedding_size,
@@ -124,14 +132,22 @@ def initialize_incremental_model(opt, src, tgt, train):
                          bidirectional=opt.bidirectional,
                          rnn_cell=opt.rnn_cell,
                          variable_lengths=True)
-    decoder = decoder_cls(len(tgt.vocab), opt.max_len, decoder_hidden_size,
-                         dropout_p=opt.dropout_p_decoder,
-                         n_layers=opt.n_layers,
-                         use_attention=opt.attention,
-                         attention_method=opt.attention_method,
-                         bidirectional=opt.bidirectional,
-                         rnn_cell=opt.rnn_cell,
-                         eos_id=tgt.eos_id, sos_id=tgt.sos_id)
+
+    decoder_kwargs = {
+        "dropout_p": opt.dropout_p_decoder,
+        "n_layers": opt.n_layers,
+        "use_attention": opt.attention,
+        "attention_method": opt.attention_method,
+        "bidirectional": opt.bidirectional,
+        "rnn_cell": opt.rnn_cell,
+        "eos_id": tgt.eos_id, "sos_id": tgt.sos_id
+    }
+
+    if opt.bottleneck is not None:
+        decoder_kwargs["bottleneck_type"] = opt.bottleneck
+        decoder_kwargs["window_size"] = opt.window_size
+
+    decoder = decoder_cls(len(tgt.vocab), opt.max_len, decoder_hidden_size, **decoder_kwargs)
 
     if opt.anticipation_loss is None:
         seq2seq = Seq2seq(encoder, decoder)

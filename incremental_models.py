@@ -3,10 +3,15 @@ Module defining classes that were used to conduct experiments in order to develo
 linguistic information more incrementally and therefore closer to the way that humans process language.
 """
 
+# STD
+import random
+
+# EXT
 from machine.models.EncoderRNN import EncoderRNN
 from machine.models.DecoderRNN import DecoderRNN
 from machine.models.seq2seq import Seq2seq
-
+from machine.models.attention import Attention
+import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -101,6 +106,142 @@ class AnticipatingEmbeddingEncoderRNN(AnticipatingEncoderRNN):
 class BottleneckDecoderRNN(DecoderRNN):
     """
     Special kind of decoder which only has access to a certain part of the encoded sequence at every time step.
+
+    Bottleneck type "window" specifies that the decoder only has access to a window of encoder hidden states when using
+    attention. E.g when using window size 1, the attention at time step t=3 only has access to the encoder hidden states
+    at time steps 2-4.
+
+    Bottleneck type "past" allows access to all encoder hidden states 1 ... t at decoding time step t.
     """
-    # TODO: Implement
-    pass
+    def __init__(self, *args, use_attention=None, bottleneck_type="window", window_size=1,
+                 **kwargs):
+        assert bottleneck_type in ("window", "past"), \
+            f"Invalid mode for bottleneck decoder found: {mode}, window or past expected."
+        assert use_attention == "pre-rnn", "This decoder can only be used with pre-RNN attention."
+
+        self.bottleneck_type = bottleneck_type
+        self.window_size = window_size
+        super().__init__(*args, **kwargs, use_attention=use_attention)
+
+        if use_attention:
+            self.attention = BottleneckAttention(self.hidden_size, self.attention_method,
+                                                 bottleneck_type=bottleneck_type, window_size=window_size)
+        else:
+            self.attention = None
+
+    def forward(self, inputs=None, encoder_hidden=None, encoder_outputs=None,
+                function=F.log_softmax, teacher_forcing_ratio=0):
+
+        ret_dict = dict()
+        if self.use_attention:
+            ret_dict[DecoderRNN.KEY_ATTN_SCORE] = list()
+
+        inputs, batch_size, max_length = self._validate_args(inputs, encoder_hidden, encoder_outputs,
+                                                             function, teacher_forcing_ratio)
+
+        decoder_hidden = self._init_state(encoder_hidden)
+
+        use_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
+
+        decoder_outputs = []
+        sequence_symbols = []
+        lengths = np.array([max_length] * batch_size)
+
+        def decode(step, step_output, step_attn):
+            decoder_outputs.append(step_output)
+            if self.use_attention:
+                ret_dict[DecoderRNN.KEY_ATTN_SCORE].append(step_attn)
+            symbols = decoder_outputs[-1].topk(1)[1]
+            sequence_symbols.append(symbols)
+
+            eos_batches = symbols.data.eq(self.eos_id)
+            if eos_batches.dim() > 0:
+                eos_batches = eos_batches.cpu().view(-1).numpy()
+                update_idx = ((lengths > step) & eos_batches) != 0
+                lengths[update_idx] = len(sequence_symbols)
+            return symbols
+
+        # When we use pre-rnn attention we must unroll the decoder. We need to calculate the attention based on
+        # the previous hidden state, before we can calculate the next hidden state.
+        # We also need to unroll when we don't use teacher forcing. We need perform the decoder steps
+        # one-by-one since the output needs to be copied to the input of the
+        # next step.
+        if self.use_attention == 'pre-rnn' or not use_teacher_forcing:
+            unrolling = True
+        else:
+            unrolling = False
+
+        assert unrolling, "This decoder only works when using unrolling."
+
+        symbols = None
+        for di in range(max_length):
+            # We always start with the SOS symbol as input. We need to add extra dimension of length 1 for the number of decoder steps (1 in this case)
+            # When we use teacher forcing, we always use the target input.
+            if di == 0 or use_teacher_forcing:
+                decoder_input = inputs[:, di].unsqueeze(1)
+            # If we don't use teacher forcing (and we are beyond the first
+            # SOS step), we use the last output as new input
+            else:
+                decoder_input = symbols
+
+            # Perform one forward step
+            decoder_output, decoder_hidden, step_attn = self.forward_step(decoder_input, decoder_hidden, encoder_outputs,
+                                                                          function=function, timestep=di)
+            # Remove the unnecessary dimension.
+            step_output = decoder_output.squeeze(1)
+            # Get the actual symbol
+            symbols = decode(di, step_output, step_attn)
+
+        ret_dict[DecoderRNN.KEY_SEQUENCE] = sequence_symbols
+        ret_dict[DecoderRNN.KEY_LENGTH] = lengths.tolist()
+
+        return decoder_outputs, decoder_hidden, ret_dict
+
+
+class BottleneckAttention(Attention):
+    """
+    Define the attention mechanism used inside the bottleneck decoder, that only has access to a time-dependent set
+    of encoder hidden states.
+    """
+    def __init__(self, *args, bottleneck_type, window_size):
+        self.bottleneck_type = bottleneck_type
+        self.window_size = window_size
+
+        super().__init__(*args)
+
+    def forward(self, decoder_states, encoder_states,
+                **attention_method_kwargs):
+        timestep = attention_method_kwargs["timestep"]
+        batch_size = decoder_states.size(0)
+        decoder_states.size(2)
+        input_size = encoder_states.size(1)
+
+        # Compute attention vals
+        attn = self.method(decoder_states, encoder_states)
+
+        # Apply mask based on bottleneck type
+        mask = self.create_mask(timestep, attn)
+        attn = attn * mask
+
+        attn = F.softmax(attn.view(-1, input_size),
+                         dim=1).view(batch_size, -1, input_size)
+
+        # (batch, out_len, in_len) * (batch, in_len, dim) -> (batch, out_len, dim)
+        context = torch.bmm(attn, encoder_states)
+
+        return context, attn
+
+    def create_mask(self, timestep, attention):
+        mask = torch.zeros(attention.shape)
+        num_encoder_hidden = attention.shape[2]
+
+        if self.bottleneck_type == "past":
+            mask[:, :, :timestep+1] = 1
+
+        elif self.bottleneck_type == "window":
+            left_bound = max(0, timestep - self.window_size)
+            right_bound = min(num_encoder_hidden, timestep + self.window_size)
+
+            mask[:, :, left_bound:right_bound] = 1
+
+        return mask

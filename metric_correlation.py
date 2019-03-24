@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 # PROJECT
 from test_incrementality import init_argparser, load_test_data, IncrementalEvaluator, METRICS, TOP_N, \
     load_models_from_paths, is_incremental, has_attention
+from incremental_models import BottleneckDecoderRNN
 
 # CONST
 BASELINE_COLOR = "tab:blue"
@@ -102,6 +103,22 @@ def generate_measurements(models: list, metrics: list):
     return measurements
 
 
+def is_window_bottleneck(model):
+    if isinstance(model.decoder_module, BottleneckDecoderRNN):
+        if model.decoder_module.bottleneck_type == "window":
+            return True
+
+    return False
+
+
+def is_past_bottleneck(model):
+    if isinstance(model.decoder_module, BottleneckDecoderRNN):
+        if model.decoder_module.bottleneck_type == "past":
+            return True
+
+    return False
+
+
 if __name__ == "__main__":
     parser = init_argparser()
     parser.add_argument("--img_path", help="Path to directory in which to save generated plots.")
@@ -122,25 +139,33 @@ if __name__ == "__main__":
     # Plot
     def distinction_function(model):
         if is_incremental(model):
-            return "Incremental"
+            return "Anticipation"
         elif has_attention(model):
             return "Attention"
+        elif is_window_bottleneck(model):
+            return "Window"
+        elif is_past_bottleneck(model):
+            return "Past"
         else:
             return "Baseline"
 
     def marker_function(model_name):
         markers = {
-            "Incremental": "x",
+            "Anticipation": "x",
             "Attention": "o",
-            "Baseline": "D"
+            "Baseline": "D",
+            "Window": "+",
+            "Past": "*"
         }
         return markers[model_name]
 
     def color_function(model_name):
         colors = {
             "Incremental": "tab:red",
-            "Attention": "tab:blue",
-            "Baseline": "tab:green"
+            "Anticipation": "tab:blue",
+            "Baseline": "tab:green",
+            "Window": "tab:orange",
+            "Past": "tab:gray"
         }
         return colors[model_name]
 
