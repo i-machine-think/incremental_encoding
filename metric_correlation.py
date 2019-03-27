@@ -9,6 +9,7 @@ from typing import Callable, Optional
 
 # EXT
 from machine.trainer import SupervisedTrainer
+import numpy as np
 from scipy.stats import pearsonr
 import matplotlib.pyplot as plt
 
@@ -20,6 +21,7 @@ from incremental_models import BottleneckDecoderRNN
 # CONST
 BASELINE_COLOR = "tab:blue"
 INCREMENTAL_COLOR = "tab:orange"
+SHORTHANDS = {metric._NAME: short_name for short_name, metric in METRICS.items()}
 
 
 def test_metric_correlation(measurements: dict):
@@ -41,6 +43,57 @@ def test_metric_correlation(measurements: dict):
         correlations[(metric_a, metric_b)] = rho
 
     return correlations, scores
+
+
+def create_correlation_heatmap(correlations: dict, save_path: Optional[str] = None):
+    """
+    Create a heat map out of all the correlations scores between metrics.
+    """
+    # Create new dict for all possible correlation pairs
+    all_correlations = dict(correlations)
+
+    # Add inverse pairs
+    for metric_a, metric_b in correlations.keys():
+        all_correlations[(metric_b, metric_a)] = all_correlations[(metric_a, metric_b)] = correlations[(metric_a, metric_b)]
+
+    metrics_a, metrics_b = zip(*correlations.keys())
+    metrics = set(metrics_a) | set(metrics_b)
+
+    # Add correlations with itself
+    for metric in metrics:
+        all_correlations[(metric, metric)] = 1
+
+    correlation_map = np.array([[all_correlations[(metric_a, metric_b)] for metric_b in metrics] for metric_a in metrics])
+
+    fig, ax = plt.subplots()
+    img = ax.imshow(correlation_map, cmap="coolwarm")
+
+    # Create colorbar
+    cbar = ax.figure.colorbar(img, ax=ax)
+    cbar.ax.set_ylabel("Pearson's rho", rotation=-90, va="bottom")
+
+    # Set ticks
+    ax.set_xticks(np.arange(len(metrics)))
+    ax.set_yticks(np.arange(len(metrics)))
+    ax.set_xticklabels([SHORTHANDS[metric] for metric in metrics])
+    ax.set_yticklabels([SHORTHANDS[metric] for metric in metrics])
+
+    # Rotate the tick labels and set their alignment
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+
+    # Loop over data dimensions and create text annotations
+    for i in range(len(metrics)):
+        for j in range(len(metrics)):
+            ax.text(j, i, round(correlation_map[i, j], 2), ha="center", va="center", color="w", size=13)
+
+    fig.tight_layout()
+
+    if save_path is None:
+        plt.show()
+    else:
+        plt.savefig(save_path)
+
+    plt.close()
 
 
 def create_metric_scatter_plot(measurements: dict, image_dir: str, correlations: dict=None,
@@ -136,6 +189,9 @@ if __name__ == "__main__":
     measurements = generate_measurements(models, metrics)
     correlations, _ = test_metric_correlation(measurements)
 
+    # Plot heatmap
+    create_correlation_heatmap(correlations, save_path=f"{opt.img_path}correlations.png")
+
     # Plot
     def distinction_function(model):
         if is_incremental(model):
@@ -161,8 +217,8 @@ if __name__ == "__main__":
 
     def color_function(model_name):
         colors = {
-            "Incremental": "tab:red",
-            "Anticipation": "tab:blue",
+            "Anticipation": "tab:red",
+            "Attention": "tab:blue",
             "Baseline": "tab:green",
             "Window": "tab:orange",
             "Past": "tab:gray"
