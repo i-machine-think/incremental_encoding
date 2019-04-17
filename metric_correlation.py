@@ -63,10 +63,15 @@ def create_correlation_heatmap(correlations: dict, save_path: Optional[str] = No
     for metric in metrics:
         all_correlations[(metric, metric)] = 1
 
-    correlation_map = np.array([[all_correlations[(metric_a, metric_b)] for metric_b in metrics] for metric_a in metrics])
+    correlation_map = np.array([
+        [
+            all_correlations[(metric_a, metric_b)] if j <= i else 0
+            for j, metric_b in enumerate(metrics)
+        ] for i, metric_a in enumerate(metrics)
+    ])
 
     fig, ax = plt.subplots()
-    img = ax.imshow(correlation_map, cmap="coolwarm")
+    img = ax.imshow(correlation_map, cmap="coolwarm", vmin=-1, vmax=1)
 
     # Create colorbar
     cbar = ax.figure.colorbar(img, ax=ax)
@@ -84,6 +89,8 @@ def create_correlation_heatmap(correlations: dict, save_path: Optional[str] = No
     # Loop over data dimensions and create text annotations
     for i in range(len(metrics)):
         for j in range(len(metrics)):
+            if j > i:
+                continue
             ax.text(j, i, round(correlation_map[i, j], 2), ha="center", va="center", color="w", size=13)
 
     fig.tight_layout()
@@ -164,6 +171,14 @@ def is_window_bottleneck(model):
     return False
 
 
+def get_window_size(model):
+    if isinstance(model.decoder_module, BottleneckDecoderRNN):
+        if model.decoder_module.bottleneck_type == "window":
+            return model.decoder_module.window_size
+
+        return -1
+
+
 def is_past_bottleneck(model):
     if isinstance(model.decoder_module, BottleneckDecoderRNN):
         if model.decoder_module.bottleneck_type == "past":
@@ -196,12 +211,15 @@ if __name__ == "__main__":
     def distinction_function(model):
         if is_incremental(model):
             return "Anticipation"
-        elif has_attention(model):
-            return "Attention"
         elif is_window_bottleneck(model):
-            return "Window"
+            if get_window_size(model) == 1:
+                return "Window=1"
+            elif get_window_size(model) == 2:
+                return "Window=2"
         elif is_past_bottleneck(model):
             return "Past"
+        elif has_attention(model):
+            return "Attention"
         else:
             return "Baseline"
 
@@ -210,7 +228,8 @@ if __name__ == "__main__":
             "Anticipation": "x",
             "Attention": "o",
             "Baseline": "D",
-            "Window": "+",
+            "Window=1": "+",
+            "Window=2": "+",
             "Past": "*"
         }
         return markers[model_name]
@@ -220,7 +239,8 @@ if __name__ == "__main__":
             "Anticipation": "tab:red",
             "Attention": "tab:blue",
             "Baseline": "tab:green",
-            "Window": "tab:orange",
+            "Window=1": "tab:orange",
+            "Window=2": "tab:purple",
             "Past": "tab:gray"
         }
         return colors[model_name]
