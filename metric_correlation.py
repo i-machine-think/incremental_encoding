@@ -9,16 +9,19 @@ from typing import Callable, Optional
 
 # EXT
 from machine.trainer import SupervisedTrainer
+import numpy as np
 from scipy.stats import pearsonr
 import matplotlib.pyplot as plt
 
 # PROJECT
 from test_incrementality import init_argparser, load_test_data, IncrementalEvaluator, METRICS, TOP_N, \
     load_models_from_paths, is_incremental, has_attention
+from incremental_models import BottleneckDecoderRNN
 
 # CONST
 BASELINE_COLOR = "tab:blue"
 INCREMENTAL_COLOR = "tab:orange"
+SHORTHANDS = {metric._NAME: short_name for short_name, metric in METRICS.items()}
 
 
 def test_metric_correlation(measurements: dict):
@@ -40,6 +43,64 @@ def test_metric_correlation(measurements: dict):
         correlations[(metric_a, metric_b)] = rho
 
     return correlations, scores
+
+
+def create_correlation_heatmap(correlations: dict, save_path: Optional[str] = None):
+    """
+    Create a heat map out of all the correlations scores between metrics.
+    """
+    # Create new dict for all possible correlation pairs
+    all_correlations = dict(correlations)
+
+    # Add inverse pairs
+    for metric_a, metric_b in correlations.keys():
+        all_correlations[(metric_b, metric_a)] = all_correlations[(metric_a, metric_b)] = correlations[(metric_a, metric_b)]
+
+    metrics_a, metrics_b = zip(*correlations.keys())
+    metrics = set(metrics_a) | set(metrics_b)
+
+    # Add correlations with itself
+    for metric in metrics:
+        all_correlations[(metric, metric)] = 1
+
+    correlation_map = np.array([
+        [
+            all_correlations[(metric_a, metric_b)] if j <= i else 0
+            for j, metric_b in enumerate(metrics)
+        ] for i, metric_a in enumerate(metrics)
+    ])
+
+    fig, ax = plt.subplots()
+    img = ax.imshow(correlation_map, cmap="coolwarm", vmin=-1, vmax=1)
+
+    # Create colorbar
+    cbar = ax.figure.colorbar(img, ax=ax)
+    cbar.ax.set_ylabel("Pearson's rho", rotation=-90, va="bottom")
+
+    # Set ticks
+    ax.set_xticks(np.arange(len(metrics)))
+    ax.set_yticks(np.arange(len(metrics)))
+    ax.set_xticklabels([SHORTHANDS[metric] for metric in metrics])
+    ax.set_yticklabels([SHORTHANDS[metric] for metric in metrics])
+
+    # Rotate the tick labels and set their alignment
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+
+    # Loop over data dimensions and create text annotations
+    for i in range(len(metrics)):
+        for j in range(len(metrics)):
+            if j > i:
+                continue
+            ax.text(j, i, round(correlation_map[i, j], 2), ha="center", va="center", color="w", size=13)
+
+    fig.tight_layout()
+
+    if save_path is None:
+        plt.show()
+    else:
+        plt.savefig(save_path)
+
+    plt.close()
 
 
 def create_metric_scatter_plot(measurements: dict, image_dir: str, correlations: dict=None,
@@ -102,6 +163,30 @@ def generate_measurements(models: list, metrics: list):
     return measurements
 
 
+def is_window_bottleneck(model):
+    if isinstance(model.decoder_module, BottleneckDecoderRNN):
+        if model.decoder_module.bottleneck_type == "window":
+            return True
+
+    return False
+
+
+def get_window_size(model):
+    if isinstance(model.decoder_module, BottleneckDecoderRNN):
+        if model.decoder_module.bottleneck_type == "window":
+            return model.decoder_module.window_size
+
+        return -1
+
+
+def is_past_bottleneck(model):
+    if isinstance(model.decoder_module, BottleneckDecoderRNN):
+        if model.decoder_module.bottleneck_type == "past":
+            return True
+
+    return False
+
+
 if __name__ == "__main__":
     parser = init_argparser()
     parser.add_argument("--img_path", help="Path to directory in which to save generated plots.")
@@ -119,10 +204,20 @@ if __name__ == "__main__":
     measurements = generate_measurements(models, metrics)
     correlations, _ = test_metric_correlation(measurements)
 
+    # Plot heatmap
+    create_correlation_heatmap(correlations, save_path=f"{opt.img_path}correlations.png")
+
     # Plot
     def distinction_function(model):
         if is_incremental(model):
-            return "Incremental"
+            return "Anticipation"
+        elif is_window_bottleneck(model):
+            if get_window_size(model) == 1:
+                return "Window=1"
+            elif get_window_size(model) == 2:
+                return "Window=2"
+        elif is_past_bottleneck(model):
+            return "Past"
         elif has_attention(model):
             return "Attention"
         else:
@@ -130,17 +225,23 @@ if __name__ == "__main__":
 
     def marker_function(model_name):
         markers = {
-            "Incremental": "x",
+            "Anticipation": "x",
             "Attention": "o",
-            "Baseline": "D"
+            "Baseline": "D",
+            "Window=1": "+",
+            "Window=2": "+",
+            "Past": "*"
         }
         return markers[model_name]
 
     def color_function(model_name):
         colors = {
-            "Incremental": "tab:red",
+            "Anticipation": "tab:red",
             "Attention": "tab:blue",
-            "Baseline": "tab:green"
+            "Baseline": "tab:green",
+            "Window=1": "tab:orange",
+            "Window=2": "tab:purple",
+            "Past": "tab:gray"
         }
         return colors[model_name]
 

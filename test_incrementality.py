@@ -99,7 +99,7 @@ def test_incrementality(distinction_func: Callable=is_incremental, model_names: 
         first_results, second_results = np.array(first_measurements[metric]), np.array(second_measurements[metric])
         first_avg, first_std = first_results.mean(), first_results.std()
         second_avg, second_std = second_results.mean(), second_results.std()
-        _, p_value = ttest_ind(first_results, second_results)
+        _, p_value = ttest_ind(first_results, second_results, equal_var=False)
         first_name, second_name = ("Baseline", "Incremental") if model_names is None else model_names
 
         print(
