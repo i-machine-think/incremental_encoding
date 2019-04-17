@@ -16,6 +16,7 @@ import torchtext
 from machine.evaluator import Evaluator
 import numpy as np
 from scipy.stats import ttest_ind
+import matplotlib.pyplot as plt
 
 # PROJECT
 from incremental_metrics import AverageIntegrationRatio, DiagnosticClassifierAccuracy, \
@@ -100,12 +101,52 @@ def test_incrementality(distinction_func: Callable=is_incremental, model_names: 
         first_avg, first_std = first_results.mean(), first_results.std()
         second_avg, second_std = second_results.mean(), second_results.std()
         _, p_value = ttest_ind(first_results, second_results, equal_var=False)
-        first_name, second_name = ("Baseline", "Incremental") if model_names is None else model_names
+        first_name, second_name = ("Baseline", "Attention") if model_names is None else model_names
 
         print(
             f"{metric:<10}: {first_name} {first_avg:.4f} ±{first_std:.3f} | {second_name} {second_avg:.4f} "
             f"±{second_std:.3f} | p={p_value:.4f}"
         )
+
+    # Plot as bar graph
+    create_results_bar_plot(
+        first_measurements, second_measurements, names=("Baseline", "Attention"), colors=("tab:blue", "tab:orange"),
+        img_path="./img/bars.png"
+    )
+
+
+def create_results_bar_plot(first_measurements, second_measurements, names, colors, img_path=None):
+    """
+    Create bar plot with whiskers to show the metric results for two distinct groups of models.
+    """
+    metrics = first_measurements.keys()
+    num_metrics = len(metrics)
+    fig, ax = plt.subplots()
+    width = 0.3
+    ind = np.arange(num_metrics)
+
+    first_avgs, first_stds = [None] * num_metrics, [None] * num_metrics
+    second_avgs, second_stds = [None] * num_metrics, [None] * num_metrics
+
+    for i, metric in enumerate(metrics):
+        first_results, second_results = np.array(first_measurements[metric]), np.array(second_measurements[metric])
+        first_avgs[i], first_stds[i] = first_results.mean(), first_results.std()
+        second_avgs[i], second_stds[i] = second_results.mean(), second_results.std()
+
+    p1 = ax.bar(ind, first_avgs, width, color=colors[0], yerr=first_stds)
+    p2 = ax.bar(ind + width, second_avgs, width, color=colors[1], yerr=second_stds)
+
+    ax.set_xticks(ind + width / 2)
+    ax.set_xticklabels(metrics)
+
+    ax.legend((p1[0], p2[0]), names)
+    ax.autoscale_view()
+
+    if img_path is None:
+        plt.show()
+    else:
+        plt.tight_layout()
+        plt.savefig(img_path)
 
 
 class IncrementalEvaluator(Evaluator):
