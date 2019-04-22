@@ -79,7 +79,7 @@ def test_incrementality(distinction_func: Callable=is_incremental, model_names: 
     second_measurements = defaultdict(list)
 
     for model in models:
-        evaluator = IncrementalEvaluator(metrics=metrics, batch_size=opt.batch_size)
+        evaluator = IncrementalEvaluator(metrics=metrics, batch_size=1)
         metrics = evaluator.evaluate(model, test, SupervisedTrainer.get_batch_data)
 
         print(type(model).__name__)
@@ -218,6 +218,54 @@ class IncrementalEvaluator(Evaluator):
         model.train(previous_train_mode)
 
         return metrics
+
+    def evaluate_stepwise(self, model, data, get_batch_data, break_after):
+        # If the model was in train mode before this method was called, we make sure it still is
+        # after this method.
+        previous_train_mode = model.training
+        model.encoder_module.variable_lengths = False
+        model.eval()
+
+        # create batch iterator
+        batch_iterator = torchtext.data.BucketIterator(
+            dataset=data, batch_size=self.batch_size,
+            sort=False, sort_key=lambda x: len(x.src),
+            device=device, train=False
+        )
+
+        metric_results = []
+
+        metrics = self.metrics
+        for metric in metrics:
+            metric.reset()
+
+        # loop over batches
+        with torch.no_grad():
+            for i, batch in enumerate(batch_iterator):
+
+                if i > break_after:
+                    break
+
+                batch_results = []
+                input_variable, input_lengths, target_variable = get_batch_data(batch)
+
+                decoder_outputs, decoder_hidden, other = model(input_variable, input_lengths.tolist(), target_variable)
+
+                # Get other necessary information for eval
+                other["input_sequences"] = input_variable
+                encoder_results = model.encoder_module(input_variable, input_lengths)
+                other["encoder_hidden"] = encoder_results[0]
+                other["encoder_embeddings"] = model.encoder_module.embedding(input_variable)
+                other["decoder_output"] = target_variable["decoder_output"]  # Store everything used for eval in other
+                other["encoder"] = model.encoder_module.rnn
+
+                # Compute metric(s) over one batch
+                metrics = self.update_batch_metrics(metrics, other, target_variable)
+                metric_results.append([metric.get_val() for metric in metrics])
+
+        model.train(previous_train_mode)
+
+        return metric_results
 
 
 def load_test_data(opt):

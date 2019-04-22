@@ -15,6 +15,7 @@ from sklearn.linear_model import LogisticRegression
 import numpy as np
 from scipy.stats import itemfreq
 import numpy.linalg as linalg
+from scipy.spatial.distance import cosine
 
 
 class SequenceAccuracyWrapper(SequenceAccuracy):
@@ -33,7 +34,16 @@ class WordAccuracyWrapper(WordAccuracy):
         super().__init__(ignore_index=pad)
 
 
-class AverageIntegrationRatio(Metric):
+class IncrementalMetric(Metric):
+    """
+    Metaclass for incremental metrics defining common functionalities.
+    """
+    def __init__(self, *args, reduce=True, **kwargs):
+        self.reduce = reduce
+        super().__init__(*args)
+
+
+class AverageIntegrationRatio(IncrementalMetric):
     """
     This ratio measure how much of the current encoder hidden state is based on the current input token
     and on the last hidden state.
@@ -56,10 +66,14 @@ class AverageIntegrationRatio(Metric):
     _INPUT = "seqlist"
 
     def __init__(self, **kwargs):
-        super().__init__(self._NAME, self._SHORTNAME, self._INPUT)
+        super().__init__(self._NAME, self._SHORTNAME, self._INPUT, **kwargs)
         self.batch_ratio = 0
+        self.correction_norm = 0
 
     def get_val(self):
+        if self.reduce:
+            self.batch_ratio = torch.flatten(self.batch_ratio).mean()
+
         return self.batch_ratio.cpu().numpy()
 
     def reset(self):
@@ -106,9 +120,8 @@ class AverageIntegrationRatio(Metric):
             ratios[:, t - 1] = integration_ratio
 
         # Incorporate norm term for correction factor to center ratio around 1 again
-        correction_norm = sum([(time_steps - t) / t for t in range(1, time_steps)])
-
-        self.batch_ratio = ratios.view(batch_size * (time_steps - 1)).sum() / (batch_size * correction_norm)
+        correction_norm = torch.Tensor([(time_steps - t) / t for t in range(1, time_steps)])
+        self.batch_ratio = ratios / correction_norm
 
 
 class ActivationsDataset:
@@ -228,7 +241,7 @@ class ActivationsDataset:
         return train_indices, test_indices
 
 
-class DiagnosticClassifierAccuracy(Metric):
+class DiagnosticClassifierAccuracy(IncrementalMetric):
     """
     Calculate the average accuracy of diagnostic classifiers trying to predict the existence of a token during a
     specific time step based on the hidden activation of a later time step.
@@ -241,14 +254,14 @@ class DiagnosticClassifierAccuracy(Metric):
     _SHORTNAME = "dc_acc"
     _INPUT = "seqlist"
 
-    def __init__(self, max_len, pad, selection_func=None, **selection_kwargs):
-        super().__init__(self._NAME, self._SHORTNAME, self._INPUT)
+    def __init__(self, max_len, pad, selection_func=None, **kwargs):
+        super().__init__(self._NAME, self._SHORTNAME, self._INPUT, **kwargs)
         self.classifiers_trained = False  # Check whether classifiers have already been trained
         self.max_len = max_len
         self.pad = pad
         self.dataset = ActivationsDataset(max_len, pad)
         self.selection_func = selection_func
-        self.selection_kwargs = selection_kwargs
+        self.selection_kwargs = kwargs
         self.classifiers = {}
         self.accuracies = {}
 
@@ -263,10 +276,14 @@ class DiagnosticClassifierAccuracy(Metric):
         if not self.classifiers_trained:
             self.train_classifiers()
 
-        acc = sum([
-            self.weight(t, t_prime, target) * accuracy
-            for (t, t_prime, target), accuracy in self.accuracies.items()
-        ])
+        if self.reduce:
+            acc = sum([
+                self.weight(t, t_prime, target) * accuracy
+                for (t, t_prime, target), accuracy in self.accuracies.items()
+            ])
+        else:
+            acc = np.array(self.accuracies.values())
+
         acc *= self.norm_factor
 
         return acc
@@ -357,7 +374,7 @@ class WeighedDiagnosticClassifierAccuracy(DiagnosticClassifierAccuracy):
         return 1 / norm
 
 
-class RepresentationalSimilarity(Metric):
+class RepresentationalSimilarity(IncrementalMetric):
     """
     A metric expressing the similarity between hidden states after processing the same sequence of tokens.
     We would expect the hidden states to be more similar for an incremental model after processing the same sequence
@@ -385,14 +402,14 @@ class RepresentationalSimilarity(Metric):
     _SHORTNAME = "repsim"
     _INPUT = "seqlist"
 
-    def __init__(self, max_len, pad, selection_func=None, order=3, n=5, **selection_kwargs):
-        super().__init__(self._NAME, self._SHORTNAME, self._INPUT)
+    def __init__(self, max_len, pad, selection_func=None, order=2, n=10, **kwargs):
+        super().__init__(self._NAME, self._SHORTNAME, self._INPUT, **kwargs)
         self.max_len = max_len
         self.pad = pad
         self.order = order
         self.n = n
         self.selection_func = selection_func
-        self.selection_kwargs = selection_kwargs
+        self.selection_kwargs = kwargs
         self.dataset = ActivationsDataset(max_len, pad)
         self.similarities_calculated = False  # Check whether similarities have already been calculated
         self.average_distances = [defaultdict(float) for _ in range(max_len)]
@@ -442,7 +459,9 @@ class RepresentationalSimilarity(Metric):
         histories_t = [self.dataset.sentence_tokens[:, t - self.order:t] for t in range(self.order, T - 1)]
 
         # Select the most common histories ending at each time step
-        selected_histories_t = self._select_histories_by_freq(histories_t)
+        #selected_histories_t = self._select_histories_by_freq(histories_t)
+        # Sample n histories randomly from every time step
+        selected_histories_t = [histories[random.sample(range(histories.shape[0]), self.n), :] for histories in histories_t]
 
         # Get the activations corresponding to all the histories at time step t, shifted to the right by one
         activations_t = [
@@ -507,7 +526,9 @@ class RepresentationalSimilarity(Metric):
         # Do not consider: Distance of activation to itself and for a pair that has been computed earlier
         for i in range(num_activations - 1):
             for j in range(i + 1, num_activations):
-                distance = linalg.norm(activations[i, :] - activations[j, :])
+                #distance = linalg.norm(activations[i, :] - activations[j, :])
+                eps = 1e-10
+                distance = cosine(activations[i, :] + eps, activations[j, :] + eps)
                 cumulative_distance += distance
 
         return cumulative_distance / norm_factor
