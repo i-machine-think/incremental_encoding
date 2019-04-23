@@ -5,14 +5,13 @@ Perform some qualitative analyses by showing where models diverge on their metri
 # STD
 import argparse
 from collections import namedtuple
+import random
 
 # EXT
 import numpy as np
 import torch
 from machine.trainer import SupervisedTrainer
 import matplotlib.pyplot as plt
-from matplotlib import cm
-from matplotlib.cm import ScalarMappable
 
 # PROJECT
 from test_incrementality import (
@@ -74,11 +73,56 @@ def qualitative_analysis(samples, img_dir, distinction_func=has_attention, model
     sorted_scored_sentences = sorted(scored_sentences, key=lambda sen: sen.diff, reverse=True)
 
     # Plot most different samples
-    for i, scored_sentence in enumerate(sorted_scored_sentences[:samples]):
-        plot_stepwise_metric(scored_sentence, model_names, img_dir, opt, i)
+    for i, scored_sentence in enumerate(sorted_scored_sentences[:int(samples/2)]):
+        plot_stepwise_metric_line(scored_sentence, model_names, img_dir, opt, i)
+
+    # Sample some more random samples for comparison
+    for i, scored_sentence in enumerate(random.sample(sorted_scored_sentences[int(samples/2):], k=int(samples/2))):
+        plot_stepwise_metric_line(scored_sentence, model_names, img_dir, opt, i + int(samples/2))
 
 
-def plot_stepwise_metric(scored_sentence, model_names, img_dir, opt, num):
+def plot_stepwise_metric_line(scored_sentence,  model_names, img_dir, opt, num):
+    tokens = scored_sentence.src
+    # TODO: Make this metric agnostic
+    first_scores = np.concatenate(([[None]], scored_sentence.first_scores, [[None]]), axis=1).squeeze(0)
+    second_scores = np.concatenate(([[None]], scored_sentence.second_scores, [[None]]), axis=1).squeeze(0)
+    x = range(len(tokens) + 1)
+
+    fig, ax = plt.subplots()
+
+    ax.plot(x, first_scores, label="Baseline", color="tab:blue")
+    ax.plot(x, second_scores, label="Attention", color="tab:orange")
+    ax.plot(x, [1] * (len(tokens) + 1), linestyle="dashed", color="gray")
+    ax.set_ylim(top=1.8, bottom=0.2)
+    plt.xticks(x, tokens + [""], fontsize=13)
+
+    # Arrows and text
+    plt.text(0.94, 0.35, "Integrate", transform=plt.gca().transAxes, rotation=90, fontsize=11)
+    plt.text(0.94, 0.8, "Maintain", transform=plt.gca().transAxes, rotation=90, fontsize=11)
+    ax.arrow(
+        len(tokens) - 0.2, 1.025, 0, 0.7, alpha=0.6, head_width=0.1, length_includes_head=True, color="black",
+        overhang=0.75, head_length=0.05
+    )
+    ax.arrow(
+        len(tokens) - 0.2, 0.975, 0, -0.7, alpha=0.6, head_width=0.1, length_includes_head=True, color="black",
+        overhang=0.75, head_length=0.05
+    )
+
+    # Draw vertical lines
+    for x_ in range(len(tokens)):
+        plt.axvline(x=x_, alpha=0.8, color="gray", linewidth=0.25)
+
+    # Rotate the tick labels and set their alignment.
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
+             rotation_mode="anchor")
+
+    plt.legend(loc="upper left")
+    plt.tight_layout()
+    plt.savefig(f"{img_dir}/{opt.metrics[0]}_{num}.png")
+    plt.close()
+
+
+def plot_stepwise_metric_heat(scored_sentence, model_names, img_dir, opt, num):
     tokens = scored_sentence.src
     # TODO: Make this metric agnostic
     first_scores = np.concatenate(([[1]], scored_sentence.first_scores), axis=1).squeeze(0)
@@ -96,17 +140,17 @@ def plot_stepwise_metric(scored_sentence, model_names, img_dir, opt, num):
     ax.text(0, 0, "X", ha="center", va="center", color="black", fontsize=20)
     ax.text(0, 1, "X", ha="center", va="center", color="black", fontsize=20)
     for i in range(1, len(tokens)):
-        ax.text(i, 0, round(first_scores[i], 4), ha="center", va="center", color="w")
-        ax.text(i, 1, round(second_scores[i], 4), ha="center", va="center", color="w")
+        ax.text(i, 0, round(first_scores[i], 3), ha="center", va="center", color="black" if 1.05 > first_scores[i] > 0.95 else "w")
+        ax.text(i, 1, round(second_scores[i], 3), ha="center", va="center", color="black" if 1.05 > second_scores[i] > 0.95 else "w")
 
     # Rotate the tick labels and set their alignment.
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
              rotation_mode="anchor")
 
-    cbar = ax.figure.colorbar(img, ax=ax, shrink=0.4)
-    cbar.ax.set_ylabel("Metric score", rotation=-90, va="bottom")
+    cbar = ax.figure.colorbar(img, ax=ax, shrink=0.315)
+    cbar.ax.set_ylabel("Integration Ratio", rotation=-90, va="bottom")
 
-    plt.tight_layout()
+    fig.tight_layout()
     plt.savefig(f"{img_dir}/{opt.metrics[0]}_{num}.png")
     plt.close()
 
@@ -135,5 +179,5 @@ def init_argparser():
 
 if __name__ == "__main__":
     qualitative_analysis(
-        model_names=("Baseline", "Attention"), samples=15, img_dir="./img", offset=1
+        model_names=("Baseline", "Attention"), samples=20, img_dir="./img/qualitative", offset=1
     )

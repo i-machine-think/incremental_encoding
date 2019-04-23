@@ -65,10 +65,11 @@ class AverageIntegrationRatio(IncrementalMetric):
     _SHORTNAME = "intratio"
     _INPUT = "seqlist"
 
-    def __init__(self, **kwargs):
+    def __init__(self, correction=True, **kwargs):
         super().__init__(self._NAME, self._SHORTNAME, self._INPUT, **kwargs)
         self.batch_ratio = 0
         self.correction_norm = 0
+        self.correction = correction
 
     def get_val(self):
         if self.reduce:
@@ -112,7 +113,7 @@ class AverageIntegrationRatio(IncrementalMetric):
             # Conversely, in the end of a sequence, less information from the current token will be integrated because
             # a representation of the whole sentence has to be maintained. Therefore correct delta_h and delta_x
             # accordingly
-            correction_term = (time_steps - t) / t
+            correction_term = (time_steps - t) / t if self.correction else 1
 
             # Calculate ratio
             integration_ratio = correction_term * delta_x / delta_h
@@ -120,8 +121,12 @@ class AverageIntegrationRatio(IncrementalMetric):
             ratios[:, t - 1] = integration_ratio
 
         # Incorporate norm term for correction factor to center ratio around 1 again
-        correction_norm = torch.Tensor([(time_steps - t) / t for t in range(1, time_steps)])
-        self.batch_ratio = ratios / correction_norm
+        if self.correction:
+            norm = torch.Tensor([(time_steps - t) / t for t in range(1, time_steps)])
+        else:
+            norm = torch.ones(ratios.size())
+
+        self.batch_ratio = ratios / norm
 
 
 class ActivationsDataset:
