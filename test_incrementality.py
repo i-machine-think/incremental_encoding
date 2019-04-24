@@ -78,11 +78,12 @@ def test_incrementality(distinction_func: Callable=is_incremental, model_names: 
     first_measurements = defaultdict(list)
     second_measurements = defaultdict(list)
 
-    for model in models:
+    for model, model_path in zip(models, opt.models):
         evaluator = IncrementalEvaluator(metrics=metrics, batch_size=1)
         metrics = evaluator.evaluate(model, test, SupervisedTrainer.get_batch_data)
 
         print(type(model).__name__)
+        print(model_path)
         print(
             "\n".join([f"{metric._NAME:<40}: {metric.get_val():4f}" for metric in metrics])
         )

@@ -12,6 +12,7 @@ import numpy as np
 import torch
 from machine.trainer import SupervisedTrainer
 import matplotlib.pyplot as plt
+import matplotlib.backends.backend_pdf
 
 # PROJECT
 from test_incrementality import (
@@ -19,11 +20,15 @@ from test_incrementality import (
 )
 
 # TYPES
-ScoredSentence = namedtuple("ScoredSentence", ["src", "tgt", "first_scores", "second_scores", "diff"])
+ScoredSentence = namedtuple(
+    "ScoredSentence", ["src", "tgt", "first_scores", "first_std", "second_scores", "second_std", "diff"]
+)
 
 
-def qualitative_analysis(samples, img_dir, distinction_func=has_attention, model_names=None, offset=0):
+def qualitative_analysis(samples, img_dir, distinction_func=has_attention, model_names=None, pdf_path=None):
     parser = init_argparser()
+
+    pdf = matplotlib.backends.backend_pdf.PdfPages(pdf_path) if pdf_path is not None else None
 
     opt = parser.parse_args()
 
@@ -39,9 +44,15 @@ def qualitative_analysis(samples, img_dir, distinction_func=has_attention, model
     break_after = opt.break_after if opt.break_after is not None else len(test)
 
     # Load models
-    (first_model, second_model), input_vocab, output_vocab = load_models_from_paths(
-        [opt.first_model, opt.second_model], src, tgt
-    )
+    models, input_vocab, output_vocab = load_models_from_paths(opt.models, src, tgt)
+    first_models, second_models = [], []
+
+    for model in models:
+        if has_attention(model):
+            second_models.append(model)
+        else:
+            first_models.append(model)
+
     pad = output_vocab.stoi[tgt.pad_token]
 
     metrics = [METRICS[metric](max_len=opt.max_len, pad=pad, top_n=TOP_N, reduce=False) for metric in opt.metrics]
@@ -52,19 +63,30 @@ def qualitative_analysis(samples, img_dir, distinction_func=has_attention, model
 
     # Collect scores on dataset
     evaluator = IncrementalEvaluator(metrics=metrics, batch_size=opt.batch_size)
-    print("Fetch results for first model...")
-    first_scores = evaluator.evaluate_stepwise(first_model, test, SupervisedTrainer.get_batch_data, break_after)
-    print("Fetch results for second model...")
-    second_scores = evaluator.evaluate_stepwise(second_model, test, SupervisedTrainer.get_batch_data, break_after)
+    print("Fetch results for baseline models...")
+    first_scores = []
+    for first_model in first_models:
+        model_scores = evaluator.evaluate_stepwise(first_model, test, SupervisedTrainer.get_batch_data, break_after)
+        first_scores.append(model_scores)
+
+    print("Fetch results for attention models...")
+    second_scores = []
+    for second_model in second_models:
+        model_scores = evaluator.evaluate_stepwise(second_model, test, SupervisedTrainer.get_batch_data, break_after)
+        second_scores.append(model_scores)
 
     # Aggregate scores
+    first_scores = [np.concatenate([sc[0] for sc in scores], axis=0) for scores in zip(*first_scores)]
+    second_scores = [np.concatenate([sc[0] for sc in scores], axis=0) for scores in zip(*second_scores)]
+
     scored_sentences = []
-    for sentence, first_score, second_score in zip(test.examples, first_scores, second_scores):
-        # TODO: Support multiple metrics at once
-        first_score, second_score = first_score[0], second_score[0]
+    for sentence, first_scores, second_scores in zip(test.examples, first_scores, second_scores):
+        first_score, first_std = first_scores.mean(axis=0, keepdims=True), first_scores.std(axis=0, keepdims=True)
+        second_score, second_std = second_scores.mean(axis=0, keepdims=True), second_scores.std(axis=0, keepdims=True)
 
         scored_sentence = ScoredSentence(
             src=sentence.src, tgt=sentence.tgt, first_scores=first_score, second_scores=second_score,
+            first_std=first_std, second_std=second_std,
             diff=np.mean(np.abs(first_score-second_score))
         )
         scored_sentences.append(scored_sentence)
@@ -74,24 +96,42 @@ def qualitative_analysis(samples, img_dir, distinction_func=has_attention, model
 
     # Plot most different samples
     for i, scored_sentence in enumerate(sorted_scored_sentences[:int(samples/2)]):
-        plot_stepwise_metric_line(scored_sentence, model_names, img_dir, opt, i)
+        plot_stepwise_metric_line(scored_sentence, model_names, img_dir, opt, i, pdf=pdf)
 
     # Sample some more random samples for comparison
     for i, scored_sentence in enumerate(random.sample(sorted_scored_sentences[int(samples/2):], k=int(samples/2))):
-        plot_stepwise_metric_line(scored_sentence, model_names, img_dir, opt, i + int(samples/2))
+        plot_stepwise_metric_line(scored_sentence, model_names, img_dir, opt, i + int(samples/2), pdf=pdf)
+
+    if pdf is not None:
+        pdf.close()
 
 
-def plot_stepwise_metric_line(scored_sentence,  model_names, img_dir, opt, num):
+def plot_stepwise_metric_line(scored_sentence,  model_names, img_dir, opt, num, pdf=None):
     tokens = scored_sentence.src
+
+    def pad_data(data):
+        return np.concatenate(([[None]], data, [[None]]), axis=1).squeeze(0)
+
     # TODO: Make this metric agnostic
-    first_scores = np.concatenate(([[None]], scored_sentence.first_scores, [[None]]), axis=1).squeeze(0)
-    second_scores = np.concatenate(([[None]], scored_sentence.second_scores, [[None]]), axis=1).squeeze(0)
+    first_scores = pad_data(scored_sentence.first_scores)
+    second_scores = pad_data(scored_sentence.second_scores)
     x = range(len(tokens) + 1)
 
     fig, ax = plt.subplots()
 
+    # Plot data
+    first_high = (scored_sentence.first_scores + scored_sentence.first_std).squeeze(0)
+    first_low = (scored_sentence.first_scores - scored_sentence.first_std).squeeze(0)
+    second_high = (scored_sentence.second_scores + scored_sentence.second_std).squeeze(0)
+    second_low = (scored_sentence.second_scores - scored_sentence.second_std).squeeze(0)
     ax.plot(x, first_scores, label="Baseline", color="tab:blue")
+    plt.fill_between(x[1:-1], first_high,  scored_sentence.first_scores.squeeze(0), alpha=0.4, color="tab:blue")
+    plt.fill_between(x[1:-1],  scored_sentence.first_scores.squeeze(0), first_low, alpha=0.4, color="tab:blue")
+
     ax.plot(x, second_scores, label="Attention", color="tab:orange")
+    plt.fill_between(x[1:-1], second_high, scored_sentence.second_scores.squeeze(0), alpha=0.4, color="tab:orange")
+    plt.fill_between(x[1:-1], scored_sentence.second_scores.squeeze(0), second_low, alpha=0.4, color="tab:orange")
+
     ax.plot(x, [1] * (len(tokens) + 1), linestyle="dashed", color="gray")
     ax.set_ylim(top=1.8, bottom=0.2)
     plt.xticks(x, tokens + [""], fontsize=13)
@@ -118,7 +158,12 @@ def plot_stepwise_metric_line(scored_sentence,  model_names, img_dir, opt, num):
 
     plt.legend(loc="upper left")
     plt.tight_layout()
-    plt.savefig(f"{img_dir}/{opt.metrics[0]}_{num}.png")
+
+    if pdf is None:
+        plt.savefig(f"{img_dir}/{opt.metrics[0]}_{num}.png")
+    else:
+        pdf.savefig(fig)
+
     plt.close()
 
 
@@ -170,8 +215,7 @@ def init_argparser():
                         type=int, help='set cuda device to use')
     parser.add_argument('--max_len', type=int,
                         help='Maximum sequence length', default=50)
-    parser.add_argument("--first_model", type=str)
-    parser.add_argument("--second_model", type=str)
+    parser.add_argument("--models", nargs="+", help="List of paths to models used to conduct analyses.")
     parser.add_argument("--break_after", type=int)
 
     return parser
@@ -179,5 +223,6 @@ def init_argparser():
 
 if __name__ == "__main__":
     qualitative_analysis(
-        model_names=("Baseline", "Attention"), samples=20, img_dir="./img/qualitative", offset=1
+        model_names=("Baseline", "Attention"), samples=20, img_dir="./img/qualitative",
+        pdf_path="./img/qualitative/qualitative.pdf"
     )
