@@ -8,7 +8,7 @@ To use the code in this repo, install all dependencies first:
 
     pip install -r requirements.txt
     
-Models are then trained using the [machine](https://github.com/i-machine-think/machine) library (refer to the libraries documentation for more information).
+Models are then trained using the [machine](https://github.com/i-machine-think/machine) library (refer to the library's documentation for more information).
 
 After finishing model training, you can use the following scripts inside the repo:
 
