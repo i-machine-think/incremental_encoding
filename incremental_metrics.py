@@ -5,7 +5,7 @@ Implementing metrics in order to measure the degree to which a model processes i
 # STD
 import random
 import math
-from collections import defaultdict, Counter
+from collections import defaultdict
 
 # EXT
 from machine.metrics.metrics import Metric, SequenceAccuracy, WordAccuracy
@@ -407,8 +407,12 @@ class RepresentationalSimilarity(IncrementalMetric):
     _SHORTNAME = "repsim"
     _INPUT = "seqlist"
 
-    def __init__(self, max_len, pad, selection_func=None, order=2, n=10, **kwargs):
+    def __init__(self, max_len, pad, selection_func=None, order=2, n=10, dist="cos", **kwargs):
+        assert dist in ("cos", "euclidean"), \
+            "Distance measure has to be either cosine similarity (cos) or euclidean distance (euclidean)"
+
         super().__init__(self._NAME, self._SHORTNAME, self._INPUT, **kwargs)
+        self.dist = dist
         self.max_len = max_len
         self.pad = pad
         self.order = order
@@ -463,8 +467,6 @@ class RepresentationalSimilarity(IncrementalMetric):
         # Collect all histories of length order
         histories_t = [self.dataset.sentence_tokens[:, t - self.order:t] for t in range(self.order, T - 1)]
 
-        # Select the most common histories ending at each time step
-        #selected_histories_t = self._select_histories_by_freq(histories_t)
         # Sample n histories randomly from every time step
         selected_histories_t = [histories[random.sample(range(histories.shape[0]), self.n), :] for histories in histories_t]
 
@@ -498,28 +500,7 @@ class RepresentationalSimilarity(IncrementalMetric):
 
         return selected_activations_t
 
-    def _select_histories_by_freq(self, histories_t):
-        """
-        Select histories by frequency (ignoring the padding token).
-        """
-        filtered_histories_t = [
-            [history for history in histories if self.pad not in history]  # Don't count padding tokens
-            for histories in histories_t
-        ]
-        history_freqs_t = [Counter() for _ in filtered_histories_t]
-
-        for counter, histories in zip(history_freqs_t, filtered_histories_t):
-            for history in histories:
-                history = tuple(history)  # Make history hashable
-                counter[history] += 1
-
-        # Convert back to numpy array
-        selected_histories_t = [np.array(list(zip(*counter.most_common(self.n)))[0]) for counter in history_freqs_t]
-
-        return selected_histories_t
-
-    @staticmethod
-    def calculate_average_distance(activations):
+    def calculate_average_distance(self, activations):
         """
         Calculate the average euclidean distance between activations.
         """
@@ -531,9 +512,14 @@ class RepresentationalSimilarity(IncrementalMetric):
         # Do not consider: Distance of activation to itself and for a pair that has been computed earlier
         for i in range(num_activations - 1):
             for j in range(i + 1, num_activations):
-                #distance = linalg.norm(activations[i, :] - activations[j, :])
-                eps = 1e-10
-                distance = cosine(activations[i, :] + eps, activations[j, :] + eps)
+
+                if self.dist == "euclidean":
+                    distance = linalg.norm(activations[i, :] - activations[j, :])
+
+                elif self.dist == "cos":
+                    eps = 1e-10
+                    distance = cosine(activations[i, :] + eps, activations[j, :] + eps)
+
                 cumulative_distance += distance
 
         return cumulative_distance / norm_factor

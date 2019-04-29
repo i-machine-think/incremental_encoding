@@ -22,9 +22,6 @@ import matplotlib.pyplot as plt
 from incremental_metrics import AverageIntegrationRatio, DiagnosticClassifierAccuracy, \
     WeighedDiagnosticClassifierAccuracy, RepresentationalSimilarity, SequenceAccuracyWrapper, WordAccuracyWrapper
 
-# GLOBALS
-from incremental_models import IncrementalSeq2Seq
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 METRICS = {
     "int_ratio": AverageIntegrationRatio,
@@ -34,16 +31,11 @@ METRICS = {
     "seq_acc": SequenceAccuracyWrapper,
     "word_acc": WordAccuracyWrapper
 }
+VANILLA_COLOR = "tab:blue"
+ATTENTION_COLOR = "tab:orange"
 
 # CONSTANTS
 TOP_N = 3
-
-
-def is_incremental(model):
-    """
-    Test whether a model is of an incremental model class.
-    """
-    return isinstance(model, IncrementalSeq2Seq)
 
 
 def has_attention(model):
@@ -53,7 +45,7 @@ def has_attention(model):
     return model.decoder_module.attention_method is not None
 
 
-def test_incrementality(distinction_func: Callable=is_incremental, model_names: tuple=None):
+def test_incrementality(distinction_func: Callable=has_attention, model_names: tuple=None):
     parser = init_argparser()
 
     opt = parser.parse_args()
@@ -102,7 +94,7 @@ def test_incrementality(distinction_func: Callable=is_incremental, model_names: 
         first_avg, first_std = first_results.mean(), first_results.std()
         second_avg, second_std = second_results.mean(), second_results.std()
         _, p_value = ttest_ind(first_results, second_results, equal_var=False)
-        first_name, second_name = ("Baseline", "Attention") if model_names is None else model_names
+        first_name, second_name = ("Vanilla", "Attention") if model_names is None else model_names
 
         print(
             f"{metric:<10}: {first_name} {first_avg:.4f} ±{first_std:.3f} | {second_name} {second_avg:.4f} "
@@ -111,8 +103,8 @@ def test_incrementality(distinction_func: Callable=is_incremental, model_names: 
 
     # Plot as bar graph
     create_results_bar_plot(
-        first_measurements, second_measurements, names=("Baseline", "Attention"), colors=("tab:blue", "tab:orange"),
-        img_path="./img/bars.png"
+        first_measurements, second_measurements, names=model_names, colors=(VANILLA_COLOR, ATTENTION_COLOR),
+        img_path="./img/bars_relabled.png"
     )
 
 
@@ -234,7 +226,7 @@ class IncrementalEvaluator(Evaluator):
             device=device, train=False
         )
 
-        metric_results = []
+        metric_results, model_outputs = [], []
 
         metrics = self.metrics
         for metric in metrics:
@@ -247,7 +239,6 @@ class IncrementalEvaluator(Evaluator):
                 if i > break_after:
                     break
 
-                batch_results = []
                 input_variable, input_lengths, target_variable = get_batch_data(batch)
 
                 decoder_outputs, decoder_hidden, other = model(input_variable, input_lengths.tolist(), target_variable)
@@ -263,10 +254,11 @@ class IncrementalEvaluator(Evaluator):
                 # Compute metric(s) over one batch
                 metrics = self.update_batch_metrics(metrics, other, target_variable)
                 metric_results.append([metric.get_val() for metric in metrics])
+                model_outputs.append(torch.cat(decoder_outputs, dim=0))
 
         model.train(previous_train_mode)
 
-        return metric_results
+        return metric_results, model_outputs
 
 
 def load_test_data(opt):
@@ -333,4 +325,4 @@ def init_argparser():
 
 
 if __name__ == "__main__":
-    test_incrementality(distinction_func=has_attention, model_names=("Baseline", "Attention"))
+    test_incrementality(distinction_func=has_attention, model_names=("Vanilla", "Attention"))

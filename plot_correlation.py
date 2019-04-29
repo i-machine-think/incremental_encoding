@@ -15,12 +15,11 @@ import matplotlib.pyplot as plt
 
 # PROJECT
 from test_incrementality import init_argparser, load_test_data, IncrementalEvaluator, METRICS, TOP_N, \
-    load_models_from_paths, is_incremental, has_attention
-from incremental_models import BottleneckDecoderRNN
+    load_models_from_paths, has_attention
 
 # CONST
-BASELINE_COLOR = "tab:blue"
-INCREMENTAL_COLOR = "tab:orange"
+VANILLA_COLOR = "tab:blue"
+ATTENTION_COLOR = "tab:orange"
 SHORTHANDS = {metric._NAME: short_name for short_name, metric in METRICS.items()}
 
 
@@ -104,7 +103,7 @@ def create_correlation_heatmap(correlations: dict, save_path: Optional[str] = No
 
 
 def create_metric_scatter_plot(measurements: dict, image_dir: str, correlations: dict=None,
-                               distinction_func: Callable=is_incremental, marker_func: Callable = lambda model: "o",
+                               distinction_func: Callable=has_attention, marker_func: Callable = lambda model: "o",
                                labels_func: Optional[Callable] = None, color_func: Optional[Callable] =None):
     """
     Create scatter plots showing where models fall with respect to two different metrics.
@@ -163,30 +162,6 @@ def generate_measurements(models: list, metrics: list):
     return measurements
 
 
-def is_window_bottleneck(model):
-    if isinstance(model.decoder_module, BottleneckDecoderRNN):
-        if model.decoder_module.bottleneck_type == "window":
-            return True
-
-    return False
-
-
-def get_window_size(model):
-    if isinstance(model.decoder_module, BottleneckDecoderRNN):
-        if model.decoder_module.bottleneck_type == "window":
-            return model.decoder_module.window_size
-
-        return -1
-
-
-def is_past_bottleneck(model):
-    if isinstance(model.decoder_module, BottleneckDecoderRNN):
-        if model.decoder_module.bottleneck_type == "past":
-            return True
-
-    return False
-
-
 if __name__ == "__main__":
     parser = init_argparser()
     parser.add_argument("--img_path", help="Path to directory in which to save generated plots.")
@@ -209,39 +184,22 @@ if __name__ == "__main__":
 
     # Plot
     def distinction_function(model):
-        if is_incremental(model):
-            return "Anticipation"
-        elif is_window_bottleneck(model):
-            if get_window_size(model) == 1:
-                return "Window=1"
-            elif get_window_size(model) == 2:
-                return "Window=2"
-        elif is_past_bottleneck(model):
-            return "Past"
-        elif has_attention(model):
+        if has_attention(model):
             return "Attention"
         else:
-            return "Baseline"
+            return "Vanilla"
 
     def marker_function(model_name):
         markers = {
-            "Anticipation": "x",
             "Attention": "o",
-            "Baseline": "D",
-            "Window=1": "+",
-            "Window=2": "+",
-            "Past": "*"
+            "Vanilla": "D",
         }
         return markers[model_name]
 
     def color_function(model_name):
         colors = {
-            "Anticipation": "tab:red",
             "Attention": "tab:blue",
-            "Baseline": "tab:green",
-            "Window=1": "tab:orange",
-            "Window=2": "tab:purple",
-            "Past": "tab:gray"
+            "Vanilla": "tab:green"
         }
         return colors[model_name]
 
