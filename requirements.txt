@@ -1,10 +1,10 @@
-torch
-numpy
-dill
-tqdm
-torchtext
-six
-mock
-matplotlib
-https://github.com/i-machine-think/machine.git
-sklearn
+sklearn==0.0
+torch==1.0.0
+numpy==1.15.4
+dill==0.2.7.1
+tqdm==4.26.0
+torchtext==0.3.1
+six==1.11.0
+mock==2.0.0
+matplotlib==3.0.2
+-e git+https://github.com/i-machine-think/machine.git@27e56d761547972d44c082de91beec588c3a6398#egg=machine
