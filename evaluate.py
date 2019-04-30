@@ -5,7 +5,7 @@ import logging
 import torch
 import torchtext
 
-from incremental_loss import NLLLoss
+from machine.loss.loss import NLLLoss
 from machine.dataset import SourceField, TargetField
 from machine.evaluator import Evaluator
 from machine.util.checkpoint import Checkpoint
@@ -48,6 +48,7 @@ src.vocab = input_vocab
 tgt.vocab = output_vocab
 max_len = opt.max_len
 
+
 def len_filter(example):
     return len(example.src) <= max_len and len(example.tgt) <= max_len
 
@@ -73,6 +74,3 @@ evaluator = Evaluator(loss=[loss], metrics=metrics, batch_size=opt.batch_size)
 losses, metrics = evaluator.evaluate(seq2seq, test, SupervisedTrainer.get_batch_data)
 
 print(["{}: {:6f}".format(type(metric).__name__, metric.get_val()) for metric in metrics])
-#total_loss, log_msg, _ = SupervisedTrainer.print_eval(losses, metrics, 0)
-
-#print(log_msg)

@@ -407,12 +407,19 @@ class RepresentationalSimilarity(IncrementalMetric):
     _SHORTNAME = "repsim"
     _INPUT = "seqlist"
 
-    def __init__(self, max_len, pad, selection_func=None, order=2, n=10, **kwargs):
+    def __init__(self, max_len, pad, selection_func=None, order=2, n=10, dist="cos", select_n="freq", **kwargs):
+        assert dist in ("cos", "euclidean"), \
+            "Distance measure has to be either cosine similarity (cos) or euclidean distance (euclidean)"
+        assert select_n in ("freq", "sample"), "n samples are either chosen by frequency (freq) or sampling (sample), "\
+            f"but {select_n} was found."
+
         super().__init__(self._NAME, self._SHORTNAME, self._INPUT, **kwargs)
+        self.dist = dist
         self.max_len = max_len
         self.pad = pad
         self.order = order
         self.n = n
+        self.select_n = select_n
         self.selection_func = selection_func
         self.selection_kwargs = kwargs
         self.dataset = ActivationsDataset(max_len, pad)
@@ -464,9 +471,12 @@ class RepresentationalSimilarity(IncrementalMetric):
         histories_t = [self.dataset.sentence_tokens[:, t - self.order:t] for t in range(self.order, T - 1)]
 
         # Select the most common histories ending at each time step
-        #selected_histories_t = self._select_histories_by_freq(histories_t)
+        if self.select_n == "freq":
+            selected_histories_t = self._select_histories_by_freq(histories_t)
+
         # Sample n histories randomly from every time step
-        selected_histories_t = [histories[random.sample(range(histories.shape[0]), self.n), :] for histories in histories_t]
+        elif self.select_n == "sample":
+            selected_histories_t = [histories[random.sample(range(histories.shape[0]), self.n), :] for histories in histories_t]
 
         # Get the activations corresponding to all the histories at time step t, shifted to the right by one
         activations_t = [
@@ -518,8 +528,7 @@ class RepresentationalSimilarity(IncrementalMetric):
 
         return selected_histories_t
 
-    @staticmethod
-    def calculate_average_distance(activations):
+    def calculate_average_distance(self, activations):
         """
         Calculate the average euclidean distance between activations.
         """
@@ -531,9 +540,14 @@ class RepresentationalSimilarity(IncrementalMetric):
         # Do not consider: Distance of activation to itself and for a pair that has been computed earlier
         for i in range(num_activations - 1):
             for j in range(i + 1, num_activations):
-                #distance = linalg.norm(activations[i, :] - activations[j, :])
-                eps = 1e-10
-                distance = cosine(activations[i, :] + eps, activations[j, :] + eps)
+
+                if self.dist == "euclidean":
+                    distance = linalg.norm(activations[i, :] - activations[j, :])
+
+                elif self.dist == "cos":
+                    eps = 1e-10
+                    distance = cosine(activations[i, :] + eps, activations[j, :] + eps)
+
                 cumulative_distance += distance
 
         return cumulative_distance / norm_factor
