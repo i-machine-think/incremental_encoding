@@ -35,7 +35,7 @@ VANILLA_COLOR = "tab:blue"
 ATTENTION_COLOR = "tab:orange"
 
 # CONSTANTS
-TOP_N = 3
+TOP_N = 5
 
 
 def has_attention(model):

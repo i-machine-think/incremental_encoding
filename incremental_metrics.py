@@ -5,7 +5,7 @@ Implementing metrics in order to measure the degree to which a model processes i
 # STD
 import random
 import math
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 # EXT
 from machine.metrics.metrics import Metric, SequenceAccuracy, WordAccuracy
@@ -407,9 +407,11 @@ class RepresentationalSimilarity(IncrementalMetric):
     _SHORTNAME = "repsim"
     _INPUT = "seqlist"
 
-    def __init__(self, max_len, pad, selection_func=None, order=2, n=10, dist="cos", **kwargs):
+    def __init__(self, max_len, pad, selection_func=None, order=2, n=10, dist="cos", select_n="freq", **kwargs):
         assert dist in ("cos", "euclidean"), \
             "Distance measure has to be either cosine similarity (cos) or euclidean distance (euclidean)"
+        assert select_n in ("freq", "sample"), "n samples are either chosen by frequency (freq) or sampling (sample), "\
+            f"but {select_n} was found."
 
         super().__init__(self._NAME, self._SHORTNAME, self._INPUT, **kwargs)
         self.dist = dist
@@ -417,6 +419,7 @@ class RepresentationalSimilarity(IncrementalMetric):
         self.pad = pad
         self.order = order
         self.n = n
+        self.select_n = select_n
         self.selection_func = selection_func
         self.selection_kwargs = kwargs
         self.dataset = ActivationsDataset(max_len, pad)
@@ -467,8 +470,13 @@ class RepresentationalSimilarity(IncrementalMetric):
         # Collect all histories of length order
         histories_t = [self.dataset.sentence_tokens[:, t - self.order:t] for t in range(self.order, T - 1)]
 
+        # Select the most common histories ending at each time step
+        if self.select_n == "freq":
+            selected_histories_t = self._select_histories_by_freq(histories_t)
+
         # Sample n histories randomly from every time step
-        selected_histories_t = [histories[random.sample(range(histories.shape[0]), self.n), :] for histories in histories_t]
+        elif self.select_n == "sample":
+            selected_histories_t = [histories[random.sample(range(histories.shape[0]), self.n), :] for histories in histories_t]
 
         # Get the activations corresponding to all the histories at time step t, shifted to the right by one
         activations_t = [
@@ -499,6 +507,26 @@ class RepresentationalSimilarity(IncrementalMetric):
         ]
 
         return selected_activations_t
+
+    def _select_histories_by_freq(self, histories_t):
+        """
+        Select histories by frequency (ignoring the padding token).
+        """
+        filtered_histories_t = [
+            [history for history in histories if self.pad not in history]  # Don't count padding tokens
+            for histories in histories_t
+        ]
+        history_freqs_t = [Counter() for _ in filtered_histories_t]
+
+        for counter, histories in zip(history_freqs_t, filtered_histories_t):
+            for history in histories:
+                history = tuple(history)  # Make history hashable
+                counter[history] += 1
+
+        # Convert back to numpy array
+        selected_histories_t = [np.array(list(zip(*counter.most_common(self.n)))[0]) for counter in history_freqs_t]
+
+        return selected_histories_t
 
     def calculate_average_distance(self, activations):
         """
